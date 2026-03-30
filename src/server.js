@@ -6535,7 +6535,9 @@ function profilePage(userData, success) {
 }
 
 
-app.get('/trustee',(req,res)=>{res.send('<html><body><h1>Trustee Instructions</h1><p><a href="/trustee/written">Written Instructions</a></p></body></html>');});
-app.get('/trustee/written',(req,res)=>{res.send('<html><body><h1>Written Instructions</h1><p>Document: Dropbox/Claude/Trustee-Instructions-Snipeovation-CrewCollege.docx</p><a href="/trustee">Back</a></body></html>');});
+//$removed1,(req,res)=>{res.send('<html><body><h1>Trustee Instructions</h1><p><a href="/trustee/written">Written Instructions</a></p></body></html>');});
+//$removed2,(req,res)=>{res.send('<html><body><h1>Written Instructions</h1><p>Document: Dropbox/Claude/Trustee-Instructions-Snipeovation-CrewCollege.docx</p><a href="/trustee">Back</a></body></html>');});
+app.get('/trustee',(req,res)=>{res.send('<html><body><h1>Trustee Instructions</h1><p><a href=/trustee/written>Written Instructions</a></p></body></html>');});
+app.get('/trustee/written',(req,res)=>{res.send('<html><body><h1>Written Instructions</h1><p>Document: Dropbox/Claude/Trustee-Instructions-Snipeovation-CrewCollege.docx</p><a href=/trustee>Back</a></body></html>');});
 // Start server
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
