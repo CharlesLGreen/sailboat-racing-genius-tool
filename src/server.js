@@ -6537,7 +6537,7 @@ function profilePage(userData, success) {
 
 //$removed1,(req,res)=>{res.send('<html><body><h1>Trustee Instructions</h1><p><a href="/trustee/written">Written Instructions</a></p></body></html>');});
 //$removed2,(req,res)=>{res.send('<html><body><h1>Written Instructions</h1><p>Document: Dropbox/Claude/Trustee-Instructions-Snipeovation-CrewCollege.docx</p><a href="/trustee">Back</a></body></html>');});
-app.get('/trustee',(req,res)=>{res.send('<html><body>'+tabs+'<div style=padding:30px><h1 style=color:#1B4F8A>Trustee Instructions</h1><p>Use tabs above to navigate.</p></div></body></html>');});
+app.get('/trustee',(req,res)=>{res.send('<html><body><div style=padding:30px><h1 style=color:#1B4F8A>Trustee Instructions</h1><p>Use tabs above to navigate.</p></div></body></html>');});
 app.get('/trustee/written',(req,res)=>{res.send('<html><body><h1>Written Instructions</h1><p>Document: Dropbox/Claude/Trustee-Instructions-Snipeovation-CrewCollege.docx</p><a href=/trustee>Back</a></body></html>');});
 // Start server
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
