@@ -6535,9 +6535,4 @@ function profilePage(userData, success) {
 }
 
 // Start server
-app.get('/trustee',(req,res)=>{res.sendFile('trustee.html',{root:__dirname+'/../public'})});
-app.get('/trustee/accounts',(req,res)=>{res.sendFile('trustee-accounts.html',{root:__dirname+'/../public'})});
-app.get('/trustee/operations',(req,res)=>{res.sendFile('trustee-operations.html',{root:__dirname+'/../public'})});
-app.get('/trustee/emergency',(req,res)=>{res.sendFile('trustee-emergency.html',{root:__dirname+'/../public'})});
-app.get('/trustee/written',(req,res)=>{res.sendFile('trustee-written.html',{root:__dirname+'/../public'})});
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
