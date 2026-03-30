@@ -6534,5 +6534,12 @@ function profilePage(userData, success) {
   </div>`;
 }
 
+app.get('/trustee', (req, res) => {
+  res.sendFile(path.join(__dirname, '../public/trustee.html'));
+});
+
+app.get('/trustee/written', (req, res) => {
+  res.sendFile(path.join(__dirname, '../public/trustee-written.html'));
+});
 // Start server
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
