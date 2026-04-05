@@ -7228,9 +7228,9 @@ function quickLogPage(data, error, lang) {
           </div>
           <div class="quick-race-field">
             <label>Wind Conditions</label>
-            <div class="quick-voice-wrap">
-              <input type="text" name="wind_speed" id="wind-speed-input" value="${escapeHtml(d.wind_speed || '')}" placeholder="e.g. 12-15 kts SW" autocomplete="off">
-              <button type="button" class="quick-mic" data-target="wind-speed-input" aria-label="Voice input">&#127908;</button>
+            <div class="quick-voice-wrap" style="position:relative;">
+              <input type="text" name="wind_speed" id="wind-speed-input" value="${escapeHtml(d.wind_speed || '')}" placeholder="e.g. 12-15 kts SW" autocomplete="off" style="padding-right:52px;">
+              <button type="button" class="quick-mic" data-target="wind-speed-input" aria-label="Voice input" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);width:40px;height:40px;border-radius:50%;background:#e8f0fe;border:2px solid #cbd5e0;font-size:1.3rem;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#0b3d6e;padding:0;line-height:1;z-index:2;">&#127908;</button>
             </div>
           </div>
         </div>
