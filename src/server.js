@@ -856,6 +856,18 @@ db.exec(`CREATE TABLE IF NOT EXISTS coaching_reports (
   created_at TEXT DEFAULT (datetime('now'))
 )`);
 
+// Shared reports (Share with Crew)
+db.exec(`CREATE TABLE IF NOT EXISTS shared_reports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER REFERENCES users(id),
+  token TEXT UNIQUE NOT NULL,
+  share_type TEXT NOT NULL,
+  race_log_id INTEGER,
+  coaching_report_id INTEGER,
+  snapshot_data TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now'))
+)`);
+
 // Migrate existing base64 videos from SQLite to filesystem
 try {
   const vids = db.prepare("SELECT id, photo_data, content_type FROM boat_photos WHERE content_type LIKE 'video/%' AND (file_path IS NULL OR file_path = '') AND photo_data != '' AND length(photo_data) > 0").all();
@@ -6058,10 +6070,10 @@ Analyze ALL of this data to provide a detailed, personalized coaching report. Lo
     const report = msg.content[0].text;
 
     // Save coaching report
-    db.prepare("INSERT INTO coaching_reports (user_id, report_type, race_count, has_vakaros, coaching_report) VALUES (?,?,?,?,?)")
+    const insertResult = db.prepare("INSERT INTO coaching_reports (user_id, report_type, race_count, has_vakaros, coaching_report) VALUES (?,?,?,?,?)")
       .run(userId, 'full', allLogs.length, vakarosUploads.length > 0 ? 1 : 0, report);
 
-    res.json({ report });
+    res.json({ report, reportId: insertResult.lastInsertRowid });
   } catch (err) {
     console.error("Anthropic API error:", err.message);
     res.status(500).json({ error: "AI analysis failed: " + err.message });
@@ -6077,6 +6089,47 @@ app.post("/vakaros/delete/:uploadId", requireAuth, (req, res) => {
 app.post("/coaching/delete/:reportId", requireAuth, (req, res) => {
   db.prepare("DELETE FROM coaching_reports WHERE id = ? AND user_id = ?").run(req.params.reportId, req.session.user.id);
   res.redirect("/coaching");
+});
+
+// --- Share with Crew ---
+app.post("/share/race/:id", requireAuth, (req, res) => {
+  const log = db.prepare("SELECT * FROM race_logs WHERE id = ? AND user_id = ?").get(req.params.id, req.session.user.id);
+  if (!log) return res.status(404).json({ error: "Race log not found" });
+  const user = db.prepare("SELECT display_name, username, snipe_number FROM users WHERE id = ?").get(req.session.user.id);
+  const token = crypto.randomBytes(16).toString("hex");
+  const snapshot = JSON.stringify({ log, user });
+  db.prepare("INSERT INTO shared_reports (user_id, token, share_type, race_log_id, snapshot_data) VALUES (?,?,?,?,?)")
+    .run(req.session.user.id, token, "race", log.id, snapshot);
+  res.json({ token, url: "/share/" + token });
+});
+
+app.post("/share/coaching/:id", requireAuth, (req, res) => {
+  const report = db.prepare("SELECT * FROM coaching_reports WHERE id = ? AND user_id = ?").get(req.params.id, req.session.user.id);
+  if (!report) return res.status(404).json({ error: "Report not found" });
+  const user = db.prepare("SELECT display_name, username, snipe_number FROM users WHERE id = ?").get(req.session.user.id);
+  const recentLogs = db.prepare("SELECT race_name, race_date, location, finish_position, fleet_size, wind_speed, wind_direction, performance_rating FROM race_logs WHERE user_id = ? ORDER BY race_date DESC LIMIT 5").all(req.session.user.id);
+  const token = crypto.randomBytes(16).toString("hex");
+  const snapshot = JSON.stringify({ report, user, recentLogs });
+  db.prepare("INSERT INTO shared_reports (user_id, token, share_type, coaching_report_id, snapshot_data) VALUES (?,?,?,?,?)")
+    .run(req.session.user.id, token, "coaching", report.id, snapshot);
+  res.json({ token, url: "/share/" + token });
+});
+
+app.get("/share/:token", (req, res) => {
+  const row = db.prepare("SELECT * FROM shared_reports WHERE token = ?").get(req.params.token);
+  if (!row) return res.status(404).send(renderSharePage("Not Found", `<div style="text-align:center;padding:60px 20px;"><h2 style="color:#c53030;">Link Not Found</h2><p style="color:#666;margin-top:12px;">This shared link doesn't exist or has been removed.</p><a href="/" style="display:inline-block;margin-top:20px;color:#1a6fb5;font-weight:600;">Go to Snipeovation</a></div>`));
+  const data = JSON.parse(row.snapshot_data);
+  if (row.share_type === "race") {
+    res.send(renderSharePage(
+      data.log.race_name + " — Shared Race Log",
+      sharedRacePage(data.log, data.user, row.created_at)
+    ));
+  } else {
+    res.send(renderSharePage(
+      "Coaching Report — " + (data.user.display_name || data.user.username),
+      sharedCoachingPage(data.report, data.user, data.recentLogs, row.created_at)
+    ));
+  }
 });
 
 // --- HTML TEMPLATES ---
@@ -6630,6 +6683,33 @@ function renderPage(content, user, lang, showHero) {
     iosBanner.querySelector('button:last-child').addEventListener('click', function() { sessionStorage.setItem('iosDismissed', '1'); });
   }
   </script>
+  <script>
+  function shareWithCrew(type, id, btn) {
+    var orig = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = 'Sharing...';
+    fetch('/share/' + type + '/' + id, { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.error) { alert(data.error); btn.innerHTML = orig; btn.disabled = false; return; }
+        var url = location.origin + data.url;
+        if (navigator.share) {
+          navigator.share({ title: 'My Sailing Report', url: url }).catch(function() {});
+          btn.innerHTML = '&#9989; Shared!';
+          setTimeout(function() { btn.innerHTML = orig; btn.disabled = false; }, 2000);
+        } else if (navigator.clipboard) {
+          navigator.clipboard.writeText(url).then(function() {
+            btn.innerHTML = '&#9989; Link Copied!';
+            setTimeout(function() { btn.innerHTML = orig; btn.disabled = false; }, 2500);
+          });
+        } else {
+          prompt('Copy this link to share with your crew:', url);
+          btn.innerHTML = orig; btn.disabled = false;
+        }
+      })
+      .catch(function() { alert('Failed to create share link'); btn.innerHTML = orig; btn.disabled = false; });
+  }
+  </script>
   <div style="position:fixed;bottom:8px;right:12px;font-size:0.72rem;color:#999;z-index:100;pointer-events:none;">&copy;&#8480; Charles L Green 2026</div>
 </body>
 </html>`;
@@ -6787,6 +6867,7 @@ function dashboardPage(logs, user, lang, justSaved) {
         ${log.notes ? `<div class="log-card-notes">${escapeHtml(log.notes)}</div>` : ""}
         <div class="log-card-actions">
           <a href="/edit/${log.id}" class="btn btn-secondary btn-sm">Edit</a>
+          <button class="btn btn-secondary btn-sm" onclick="shareWithCrew('race', ${log.id}, this)" style="background:#e0f2fe;color:#0b3d6e;border:1px solid #93c5fd;">&#128279; Share</button>
           <form method="POST" action="/delete/${log.id}" style="display:inline;" onsubmit="return confirm('Delete this race log?')">
             <button type="submit" class="btn btn-danger">Delete</button>
           </form>
@@ -6891,9 +6972,12 @@ function coachingPage(raceLogs, uploads, pastReports, highlightUploadId, error, 
             <h4>Coaching Report &mdash; ${escapeHtml(r.created_at.slice(0,10))}</h4>
             <div class="vak-history-meta">${r.race_count} races analyzed${r.has_vakaros ? ' &bull; includes Vakaros data' : ''}</div>
           </div>
-          <form method="POST" action="/coaching/delete/${r.id}" style="display:inline;" onsubmit="return confirm('Delete this coaching report?')">
-            <button type="submit" class="btn btn-danger">Delete</button>
-          </form>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-secondary btn-sm" onclick="shareWithCrew('coaching', ${r.id}, this)" style="background:#e0f2fe;color:#0b3d6e;border:1px solid #93c5fd;font-size:0.8rem;padding:4px 12px;">&#128279; Share with Crew</button>
+            <form method="POST" action="/coaching/delete/${r.id}" style="display:inline;" onsubmit="return confirm('Delete this coaching report?')">
+              <button type="submit" class="btn btn-danger">Delete</button>
+            </form>
+          </div>
         </div>
         <details style="margin-top:8px;">
           <summary style="cursor:pointer;color:#0b3d6e;font-weight:600;font-size:0.9rem;">View Report</summary>
@@ -7028,6 +7112,7 @@ function coachingPage(raceLogs, uploads, pastReports, highlightUploadId, error, 
         resultDiv.innerHTML = '<div class="vak-coaching-report" id="full-coaching-report" style="margin-top:20px;">' + reportHtml + '</div>' +
           '<div style="margin-top:12px;display:flex;gap:12px;flex-wrap:wrap;justify-content:center;">' +
           '<button class="btn-coaching btn-read-aloud" onclick="toggleReadAloud(this, \\'full-coaching-report\\')">&#128266; Read Aloud</button>' +
+          (data.reportId ? '<button class="btn btn-secondary btn-sm" onclick="shareWithCrew(\\'coaching\\', ' + data.reportId + ', this)" style="background:#e0f2fe;color:#0b3d6e;border:1px solid #93c5fd;padding:8px 18px;border-radius:8px;font-weight:600;">&#128279; Share with Crew</button>' : '') +
           '</div>';
         document.getElementById('full-coaching-report').scrollIntoView({ behavior: 'smooth', block: 'start' });
       })
@@ -7848,6 +7933,176 @@ function profilePage(userData, success) {
         <strong>Email:</strong> ${escapeHtml(userData.email)}
       </div>
     </div>
+  </div>`;
+}
+
+// --- Shared page templates (Share with Crew) ---
+
+function renderSharePage(title, content) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0b3d6e">
+  <title>${escapeHtml(title)} — Snipeovation</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #1a2a3a; line-height: 1.6; background: #f5f7fa; }
+    .share-header { background: #0b3d6e; color: white; padding: 16px 20px; text-align: center; }
+    .share-header h1 { font-size: 1.1rem; font-weight: 700; }
+    .share-header .sub { font-size: 0.8rem; opacity: 0.75; display: block; margin-top: 2px; }
+    .share-container { max-width: 700px; margin: 0 auto; padding: 20px 16px; }
+    .share-card { background: white; border-radius: 14px; padding: 24px 20px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); margin-bottom: 16px; }
+    .share-card h2 { font-size: 1.3rem; color: #0b3d6e; margin-bottom: 4px; }
+    .share-card h3 { font-size: 1.05rem; color: #0b3d6e; margin: 16px 0 8px; padding-bottom: 6px; border-bottom: 2px solid #e2e8f0; }
+    .share-meta { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+    .share-meta .tag { display: inline-flex; align-items: center; gap: 4px; background: #f0f7ff; color: #0b3d6e; padding: 5px 10px; border-radius: 6px; font-size: 0.82rem; font-weight: 600; }
+    .share-meta .tag-position { background: #0b3d6e; color: white; font-size: 1rem; padding: 6px 14px; border-radius: 8px; font-weight: 700; }
+    .share-section { margin-top: 16px; }
+    .share-section-label { text-transform: uppercase; font-size: 0.75rem; font-weight: 700; color: #0b3d6e; letter-spacing: 0.5px; margin-bottom: 8px; }
+    .share-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+    .share-grid .item { background: #f8fafc; padding: 6px 12px; border-radius: 6px; font-size: 0.85rem; color: #444; }
+    .share-grid .item strong { color: #333; }
+    .share-notes { background: #fafbfc; border-left: 3px solid #0b3d6e; padding: 12px 16px; border-radius: 0 8px 8px 0; margin-top: 12px; font-size: 0.9rem; color: #444; white-space: pre-wrap; }
+    .share-report { line-height: 1.7; font-size: 0.93rem; color: #333; }
+    .share-report h3 { font-size: 1rem; color: #0b3d6e; margin: 18px 0 6px; border: none; padding: 0; }
+    .share-report br + br { display: none; }
+    .share-sailor { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+    .share-sailor .avatar { width: 48px; height: 48px; border-radius: 50%; background: #0b3d6e; color: white; display: flex; align-items: center; justify-content: center; font-size: 1.3rem; font-weight: 700; flex-shrink: 0; }
+    .share-sailor .info { flex: 1; }
+    .share-sailor .name { font-size: 1.1rem; font-weight: 700; color: #0b3d6e; }
+    .share-sailor .detail { font-size: 0.82rem; color: #888; }
+    .share-footer { text-align: center; padding: 24px 16px; color: #999; font-size: 0.8rem; }
+    .share-footer a { color: #1a6fb5; text-decoration: none; font-weight: 600; }
+    .share-races { margin-top: 12px; }
+    .share-race-item { background: #f8fafc; border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; }
+    .share-race-item .name { font-weight: 600; color: #333; font-size: 0.9rem; }
+    .share-race-item .detail { font-size: 0.8rem; color: #888; }
+    @media (max-width: 500px) {
+      .share-card { padding: 18px 14px; }
+      .share-card h2 { font-size: 1.15rem; }
+      .share-meta .tag { font-size: 0.78rem; padding: 4px 8px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="share-header">
+    <h1>Snipeovation</h1>
+    <span class="sub">Shared with you</span>
+  </div>
+  ${content}
+  <div class="share-footer">
+    Shared via <a href="/">Snipeovation</a> &mdash; Snipe Sailboat Racing Genius Tool
+  </div>
+</body>
+</html>`;
+}
+
+function sharedRacePage(log, user, sharedAt) {
+  const sailorName = user.display_name || user.username;
+  const initial = sailorName.charAt(0).toUpperCase();
+  const items = [];
+  if (log.wind_speed) items.push(`<div class="item"><strong>Wind:</strong> ${escapeHtml(log.wind_speed)}${log.wind_direction ? " " + escapeHtml(log.wind_direction) : ""}</div>`);
+  if (log.sea_state) items.push(`<div class="item"><strong>Sea:</strong> ${escapeHtml(log.sea_state)}</div>`);
+  if (log.water_type) items.push(`<div class="item"><strong>Water:</strong> ${escapeHtml(log.water_type)}</div>`);
+  if (log.temperature) items.push(`<div class="item"><strong>Temp:</strong> ${escapeHtml(log.temperature)}</div>`);
+  if (log.current_tide) items.push(`<div class="item"><strong>Current/Tide:</strong> ${escapeHtml(log.current_tide)}</div>`);
+  if (log.fleet_size) items.push(`<div class="item"><strong>Fleet:</strong> ${escapeHtml(log.fleet_size)} boats</div>`);
+  if (log.crew_name) items.push(`<div class="item"><strong>Crew:</strong> ${escapeHtml(log.crew_name)}</div>`);
+  if (log.boat_number) items.push(`<div class="item"><strong>Boat:</strong> #${escapeHtml(log.boat_number)}</div>`);
+  if (log.performance_rating) items.push(`<div class="item"><strong>Rating:</strong> ${escapeHtml(log.performance_rating)}/10</div>`);
+
+  const settings = [];
+  if (log.mast_rake) settings.push(`<div class="item"><strong>Mast Rake:</strong> ${escapeHtml(log.mast_rake)}</div>`);
+  if (log.shroud_tension) settings.push(`<div class="item"><strong>Shroud:</strong> ${escapeHtml(log.shroud_tension)}</div>`);
+  if (log.shroud_turns) settings.push(`<div class="item"><strong>Sta-Master:</strong> ${escapeHtml(log.shroud_turns)}</div>`);
+  if (log.wire_size) settings.push(`<div class="item"><strong>Wire:</strong> ${escapeHtml(log.wire_size)}</div>`);
+  if (log.spreader_length) settings.push(`<div class="item"><strong>Spreader Len:</strong> ${escapeHtml(log.spreader_length)}</div>`);
+  if (log.spreader_sweep) settings.push(`<div class="item"><strong>Spreader Sweep:</strong> ${escapeHtml(log.spreader_sweep)}</div>`);
+  if (log.jib_lead) settings.push(`<div class="item"><strong>Jib Lead:</strong> ${escapeHtml(log.jib_lead)}</div>`);
+  if (log.cunningham) settings.push(`<div class="item"><strong>Cunningham:</strong> ${escapeHtml(log.cunningham)}</div>`);
+  if (log.outhaul) settings.push(`<div class="item"><strong>Outhaul:</strong> ${escapeHtml(log.outhaul)}</div>`);
+  if (log.vang) settings.push(`<div class="item"><strong>Vang:</strong> ${escapeHtml(log.vang)}</div>`);
+  if (log.traveler_position) settings.push(`<div class="item"><strong>Traveler:</strong> ${escapeHtml(log.traveler_position)}</div>`);
+  if (log.main_maker) settings.push(`<div class="item"><strong>Main:</strong> ${escapeHtml(log.main_maker)}${log.main_condition ? " (" + escapeHtml(log.main_condition) + ")" : ""}</div>`);
+  if (log.jib_maker) settings.push(`<div class="item"><strong>Jib:</strong> ${escapeHtml(log.jib_maker)}${log.jib_condition ? " (" + escapeHtml(log.jib_condition) + ")" : ""}</div>`);
+
+  return `<div class="share-container">
+    <div class="share-card">
+      <div class="share-sailor">
+        <div class="avatar">${initial}</div>
+        <div class="info">
+          <div class="name">${escapeHtml(sailorName)}</div>
+          <div class="detail">${user.snipe_number ? "Snipe #" + escapeHtml(user.snipe_number) + " &bull; " : ""}Shared ${escapeHtml(sharedAt.slice(0, 10))}</div>
+        </div>
+      </div>
+      <h2>${escapeHtml(log.race_name)}</h2>
+      <div class="share-meta">
+        <span class="tag">${formatDate(log.race_date)}</span>
+        ${log.location ? `<span class="tag">${escapeHtml(log.location)}</span>` : ""}
+        ${log.finish_position ? `<span class="tag tag-position">#${escapeHtml(log.finish_position)}</span>` : ""}
+      </div>
+
+      ${items.length ? `
+      <div class="share-section">
+        <div class="share-section-label">Conditions &amp; Details</div>
+        <div class="share-grid">${items.join("")}</div>
+      </div>` : ""}
+
+      ${settings.length ? `
+      <div class="share-section">
+        <div class="share-section-label">Boat Settings</div>
+        <div class="share-grid">${settings.join("")}</div>
+      </div>` : ""}
+
+      ${log.sail_settings_notes ? `
+      <div class="share-section">
+        <div class="share-section-label">Settings Notes</div>
+        <div class="share-notes">${escapeHtml(log.sail_settings_notes)}</div>
+      </div>` : ""}
+
+      ${log.notes ? `
+      <div class="share-section">
+        <div class="share-section-label">Race Notes</div>
+        <div class="share-notes">${escapeHtml(log.notes)}</div>
+      </div>` : ""}
+    </div>
+  </div>`;
+}
+
+function sharedCoachingPage(report, user, recentLogs, sharedAt) {
+  const sailorName = user.display_name || user.username;
+  const initial = sailorName.charAt(0).toUpperCase();
+  const reportHtml = report.coaching_report.replace(/## /g, '<h3>').replace(/\n/g, '<br>');
+
+  return `<div class="share-container">
+    <div class="share-card">
+      <div class="share-sailor">
+        <div class="avatar">${initial}</div>
+        <div class="info">
+          <div class="name">${escapeHtml(sailorName)}'s Coaching Report</div>
+          <div class="detail">${user.snipe_number ? "Snipe #" + escapeHtml(user.snipe_number) + " &bull; " : ""}${report.race_count} races analyzed${report.has_vakaros ? " &bull; includes Vakaros data" : ""} &bull; ${escapeHtml(report.created_at.slice(0, 10))}</div>
+        </div>
+      </div>
+      <div class="share-report">${reportHtml}</div>
+    </div>
+
+    ${recentLogs && recentLogs.length > 0 ? `
+    <div class="share-card">
+      <h3 style="margin-top:0;">Recent Races</h3>
+      <div class="share-races">
+        ${recentLogs.map(l => `
+          <div class="share-race-item">
+            <div>
+              <div class="name">${escapeHtml(l.race_name)}</div>
+              <div class="detail">${formatDate(l.race_date)}${l.location ? " &mdash; " + escapeHtml(l.location) : ""}${l.wind_speed ? " &bull; " + escapeHtml(l.wind_speed) : ""}</div>
+            </div>
+            ${l.finish_position ? `<span class="tag tag-position" style="background:#0b3d6e;color:white;padding:4px 10px;border-radius:6px;font-weight:700;font-size:0.85rem;">#${escapeHtml(l.finish_position)}${l.fleet_size ? "/" + escapeHtml(l.fleet_size) : ""}</span>` : ""}
+          </div>
+        `).join("")}
+      </div>
+    </div>` : ""}
   </div>`;
 }
 
