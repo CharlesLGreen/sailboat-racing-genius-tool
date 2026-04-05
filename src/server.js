@@ -1051,7 +1051,8 @@ app.get("/register", (req, res) => {
 app.get("/dashboard", requireAuth, (req, res) => {
   const logs = db.prepare("SELECT * FROM race_logs WHERE user_id = ? ORDER BY race_date DESC").all(req.session.user.id);
   const lang = getLang(req);
-  res.send(renderPage(dashboardPage(logs, req.session.user, lang), req.session.user, lang));
+  const justSaved = req.query.saved === '1';
+  res.send(renderPage(dashboardPage(logs, req.session.user, lang, justSaved), req.session.user, lang));
 });
 
 app.get("/log", requireAuth, (req, res) => {
@@ -1078,7 +1079,7 @@ app.post("/quick-log", requireAuth, (req, res) => {
     `INSERT INTO race_logs (user_id, race_date, race_name, finish_position, fleet_size, wind_speed, notes)
      VALUES (?,?,?,?,?,?,?)`
   ).run(req.session.user.id, race_date, effectiveName, isPractice ? null : (finish_position || null), isPractice ? null : (fleet_size || null), isPractice ? (wind_speed || null) : null, fullNotes);
-  res.redirect("/dashboard");
+  res.redirect("/dashboard?saved=1");
 });
 
 app.get("/edit/:id", requireAuth, (req, res) => {
@@ -1318,7 +1319,7 @@ app.post("/log", requireAuth, (req, res) => {
     `INSERT INTO race_logs (user_id, race_date, race_name, location, wind_speed, wind_direction, sea_state, temperature, current_tide, finish_position, fleet_size, performance_rating, boat_number, crew_name, skipper_weight, crew_weight, main_maker, jib_maker, jib_used, mainsail_used, main_condition, jib_condition, mast_rake, shroud_tension, shroud_turns, wire_size, jib_lead, jib_cloth_tension, jib_height, jib_outboard_lead, cunningham, outhaul, vang, spreader_length, spreader_sweep, centerboard_position, traveler_position, augie_equalizer, mast_wiggle, water_type, sail_settings_notes, notes)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   ).run(req.session.user.id, race_date, race_name, location, wind_speed, wind_direction, sea_state, temperature, current_tide, finish_position, fleet_size, performance_rating, boat_number, crew_name, skipper_weight, crew_weight, main_maker, jib_maker, jib_used, mainsail_used, main_condition, jib_condition, mast_rake, shroud_tension, shroud_turns, wire_size, jib_lead, jib_cloth_tension, jib_height, jib_outboard_lead, cunningham, outhaul, vang, spreader_length, spreader_sweep, centerboard_position, traveler_position, augie_equalizer, mast_wiggle, water_type, sail_settings_notes, notes);
-  res.redirect("/dashboard");
+  res.redirect("/dashboard?saved=1");
 });
 
 app.post("/edit/:id", requireAuth, (req, res) => {
@@ -6610,11 +6611,31 @@ function homePage(logs, user, lang) {
   </div>`;
 }
 
-function dashboardPage(logs, user, lang) {
+function dashboardPage(logs, user, lang, justSaved) {
   const L = (k) => t(k, lang || 'en');
   const totalRaces = logs.length;
   const locations = new Set(logs.map(l => l.location).filter(Boolean)).size;
   return `<div class="container">
+    ${justSaved ? `
+    <div id="vakaros-nudge" style="background:linear-gradient(135deg,#f0f7ff,#e6f0fa);border:2px solid #93c5fd;border-radius:14px;padding:20px;margin-bottom:20px;position:relative;">
+      <button onclick="document.getElementById('vakaros-nudge').style.display='none'" style="position:absolute;top:10px;right:14px;background:none;border:none;color:#94a3b8;font-size:1.2rem;cursor:pointer;padding:4px;" title="Dismiss">&times;</button>
+      <div style="display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;">
+        <div style="font-size:2rem;flex-shrink:0;">&#9989;</div>
+        <div style="flex:1;min-width:200px;">
+          <p style="color:#059669;font-weight:700;font-size:1.05rem;margin:0 0 4px;">Race logged!</p>
+          <p style="color:#0b3d6e;font-weight:700;font-size:0.95rem;margin:0 0 6px;">&#9973; Don't forget your Vakaros data!</p>
+          <p style="color:#555;font-size:0.88rem;margin:0 0 10px;">Share your session from Vakaros Connect to get telemetry-powered coaching.</p>
+          <div style="background:#fff;border:1px solid #d0e2f7;border-radius:10px;padding:10px 14px;font-size:0.84rem;color:#444;margin-bottom:10px;">
+            <strong>Steps:</strong> Open Vakaros Connect &rarr; Tap Sessions &rarr; Export &rarr; Share &rarr; Snipeovation
+          </div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <a href="/coaching" class="btn btn-primary" style="font-size:0.88rem;padding:8px 18px;">&#127919; Go to Coaching</a>
+            <button onclick="document.getElementById('vakaros-nudge').style.display='none'" style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;padding:8px 16px;font-size:0.85rem;color:#666;cursor:pointer;font-weight:600;">Remind me later</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    ` : ''}
     <h2>${L('myLogs')} <span class="sub">${escapeHtml(user.display_name || user.username)}${user.snipe_number ? " &mdash; Snipe #" + escapeHtml(user.snipe_number) : ""}</span></h2>
     <div class="stats-row">
       <div class="stat-card"><div class="num">${totalRaces}</div><div class="label">${lang === 'es' ? 'Regatas' : lang === 'it' ? 'Regate' : lang === 'pt' ? 'Regatas' : 'Races Logged'}</div></div>
@@ -6723,9 +6744,18 @@ function coachingPage(raceLogs, uploads, pastReports, highlightUploadId, error, 
     </div>
 
     ${!hasVakaros ? `
-    <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:16px 20px;margin-bottom:20px;">
-      <p style="color:#c2410c;font-weight:600;margin:0 0 4px;font-size:0.93rem;">&#128314; Want even more detailed coaching?</p>
-      <p style="color:#78350f;font-size:0.88rem;margin:0;">Upload Vakaros sensor data below to add speed, heel angle, VMG, and tack/gybe analysis to your coaching report.</p>
+    <div style="background:linear-gradient(135deg,#f0f7ff,#e6f0fa);border:2px solid #93c5fd;border-radius:14px;padding:20px;margin-bottom:20px;">
+      <div style="display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;">
+        <div style="font-size:2rem;flex-shrink:0;">&#128225;</div>
+        <div style="flex:1;min-width:200px;">
+          <p style="color:#0b3d6e;font-weight:700;font-size:1.05rem;margin:0 0 6px;">Get deeper coaching with Vakaros</p>
+          <p style="color:#555;font-size:0.9rem;margin:0 0 10px;">If you use a Vakaros Atlas, share your sessions directly to Snipeovation after each sail. Your coach will analyze speed, heel angle, VMG, tacking efficiency, and trends across every session.</p>
+          <div style="background:#fff;border:1px solid #d0e2f7;border-radius:10px;padding:12px 14px;font-size:0.85rem;color:#444;margin-bottom:10px;">
+            <strong>How it works:</strong> After sailing, open Vakaros Connect &rarr; Sessions &rarr; Export &rarr; Share &rarr; choose Snipeovation. That's it &mdash; your data flows into your next coaching report automatically.
+          </div>
+          <p style="color:#888;font-size:0.82rem;margin:0;">No Vakaros? No problem &mdash; coaching works great with just your race logs. Vakaros adds optional telemetry depth.</p>
+        </div>
+      </div>
     </div>
     ` : ''}
 
