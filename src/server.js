@@ -7228,7 +7228,10 @@ function quickLogPage(data, error, lang) {
           </div>
           <div class="quick-race-field">
             <label>Wind Conditions</label>
-            <input type="text" name="wind_speed" value="${escapeHtml(d.wind_speed || '')}" placeholder="e.g. 12-15 kts SW" autocomplete="off">
+            <div class="quick-voice-wrap">
+              <input type="text" name="wind_speed" id="wind-speed-input" value="${escapeHtml(d.wind_speed || '')}" placeholder="e.g. 12-15 kts SW" autocomplete="off">
+              <button type="button" class="quick-mic" data-target="wind-speed-input" aria-label="Voice input">&#127908;</button>
+            </div>
           </div>
         </div>
 
