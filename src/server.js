@@ -846,6 +846,15 @@ db.exec(`CREATE TABLE IF NOT EXISTS vakaros_coaching (
   coaching_report TEXT,
   created_at TEXT DEFAULT (datetime('now'))
 )`);
+db.exec(`CREATE TABLE IF NOT EXISTS coaching_reports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER REFERENCES users(id),
+  report_type TEXT DEFAULT 'full',
+  race_count INTEGER,
+  has_vakaros INTEGER DEFAULT 0,
+  coaching_report TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+)`);
 
 // Migrate existing base64 videos from SQLite to filesystem
 try {
@@ -5704,9 +5713,11 @@ function parseVakarosCsv(csvText) {
   };
 }
 
-app.get("/vakaros", requireAuth, (req, res) => {
+app.get("/vakaros", requireAuth, (req, res) => { res.redirect("/coaching"); });
+
+app.get("/coaching", requireAuth, (req, res) => {
   const lang = getLang(req);
-  const logs = db.prepare("SELECT id, race_date, race_name, location FROM race_logs WHERE user_id = ? ORDER BY race_date DESC").all(req.session.user.id);
+  const logs = db.prepare("SELECT * FROM race_logs WHERE user_id = ? ORDER BY race_date DESC").all(req.session.user.id);
   const uploads = db.prepare(`
     SELECT vu.*, rl.race_name, rl.race_date, vc.coaching_report, vc.id as coaching_id
     FROM vakaros_uploads vu
@@ -5715,15 +5726,17 @@ app.get("/vakaros", requireAuth, (req, res) => {
     WHERE vu.user_id = ?
     ORDER BY vu.created_at DESC
   `).all(req.session.user.id);
-  res.send(renderPage(vakarosPage(logs, uploads, null, null, lang), req.session.user, lang));
+  const pastReports = db.prepare("SELECT * FROM coaching_reports WHERE user_id = ? ORDER BY created_at DESC LIMIT 10").all(req.session.user.id);
+  res.send(renderPage(coachingPage(logs, uploads, pastReports, null, null, lang), req.session.user, lang));
 });
 
 app.post("/vakaros/upload", requireAuth, upload.single("vakaros_csv"), (req, res) => {
   const lang = getLang(req);
-  const logs = db.prepare("SELECT id, race_date, race_name, location FROM race_logs WHERE user_id = ? ORDER BY race_date DESC").all(req.session.user.id);
+  const logs = db.prepare("SELECT * FROM race_logs WHERE user_id = ? ORDER BY race_date DESC").all(req.session.user.id);
   if (!req.file) {
     const uploads = db.prepare("SELECT vu.*, rl.race_name, rl.race_date, vc.coaching_report, vc.id as coaching_id FROM vakaros_uploads vu LEFT JOIN race_logs rl ON vu.race_log_id = rl.id LEFT JOIN vakaros_coaching vc ON vc.upload_id = vu.id WHERE vu.user_id = ? ORDER BY vu.created_at DESC").all(req.session.user.id);
-    return res.send(renderPage(vakarosPage(logs, uploads, null, "Please select a CSV file.", lang), req.session.user, lang));
+    const pastReports = db.prepare("SELECT * FROM coaching_reports WHERE user_id = ? ORDER BY created_at DESC LIMIT 10").all(req.session.user.id);
+    return res.send(renderPage(coachingPage(logs, uploads, pastReports, null, "Please select a CSV file.", lang), req.session.user, lang));
   }
 
   try {
@@ -5731,102 +5744,169 @@ app.post("/vakaros/upload", requireAuth, upload.single("vakaros_csv"), (req, res
     const stats = parseVakarosCsv(csvText);
     const raceLogId = req.body.race_log_id || null;
 
-    const result = db.prepare(`
+    db.prepare(`
       INSERT INTO vakaros_uploads (user_id, race_log_id, filename, row_count, duration_minutes, distance_nm, avg_speed, max_speed, avg_heel, avg_vmg, tack_count, gybe_count, csv_summary)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(req.session.user.id, raceLogId, req.file.originalname, stats.rowCount, stats.durationMinutes, stats.distanceNm, stats.avgSpeed, stats.maxSpeed, stats.avgHeel, stats.avgVmg, stats.tackCount, stats.gybeCount, stats.csvSummary);
 
-    const uploads = db.prepare("SELECT vu.*, rl.race_name, rl.race_date, vc.coaching_report, vc.id as coaching_id FROM vakaros_uploads vu LEFT JOIN race_logs rl ON vu.race_log_id = rl.id LEFT JOIN vakaros_coaching vc ON vc.upload_id = vu.id WHERE vu.user_id = ? ORDER BY vu.created_at DESC").all(req.session.user.id);
-    res.send(renderPage(vakarosPage(logs, uploads, result.lastInsertRowid, null, lang), req.session.user, lang));
+    res.redirect("/coaching");
   } catch (err) {
+    const logs2 = db.prepare("SELECT * FROM race_logs WHERE user_id = ? ORDER BY race_date DESC").all(req.session.user.id);
     const uploads = db.prepare("SELECT vu.*, rl.race_name, rl.race_date, vc.coaching_report, vc.id as coaching_id FROM vakaros_uploads vu LEFT JOIN race_logs rl ON vu.race_log_id = rl.id LEFT JOIN vakaros_coaching vc ON vc.upload_id = vu.id WHERE vu.user_id = ? ORDER BY vu.created_at DESC").all(req.session.user.id);
-    res.send(renderPage(vakarosPage(logs, uploads, null, "Error parsing CSV: " + err.message, lang), req.session.user, lang));
+    const pastReports = db.prepare("SELECT * FROM coaching_reports WHERE user_id = ? ORDER BY created_at DESC LIMIT 10").all(req.session.user.id);
+    res.send(renderPage(coachingPage(logs2, uploads, pastReports, null, "Error parsing CSV: " + err.message, lang), req.session.user, lang));
   }
 });
 
 app.post("/vakaros/share", requireAuth, upload.single("file"), (req, res) => {
-  const lang = getLang(req);
-  if (!req.file) return res.redirect("/vakaros");
-
+  if (!req.file) return res.redirect("/coaching");
   try {
     const csvText = req.file.buffer.toString("utf-8");
     const stats = parseVakarosCsv(csvText);
-
-    const result = db.prepare(`
+    db.prepare(`
       INSERT INTO vakaros_uploads (user_id, race_log_id, filename, row_count, duration_minutes, distance_nm, avg_speed, max_speed, avg_heel, avg_vmg, tack_count, gybe_count, csv_summary)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(req.session.user.id, null, req.file.originalname || "Shared session", stats.rowCount, stats.durationMinutes, stats.distanceNm, stats.avgSpeed, stats.maxSpeed, stats.avgHeel, stats.avgVmg, stats.tackCount, stats.gybeCount, stats.csvSummary);
-
-    const logs = db.prepare("SELECT id, race_date, race_name, location FROM race_logs WHERE user_id = ? ORDER BY race_date DESC").all(req.session.user.id);
-    const uploads = db.prepare("SELECT vu.*, rl.race_name, rl.race_date, vc.coaching_report, vc.id as coaching_id FROM vakaros_uploads vu LEFT JOIN race_logs rl ON vu.race_log_id = rl.id LEFT JOIN vakaros_coaching vc ON vc.upload_id = vu.id WHERE vu.user_id = ? ORDER BY vu.created_at DESC").all(req.session.user.id);
-    res.send(renderPage(vakarosPage(logs, uploads, result.lastInsertRowid, null, lang, "Session received! Link it to a race and get your coaching report."), req.session.user, lang));
+    res.redirect("/coaching");
   } catch (err) {
-    res.redirect("/vakaros");
+    res.redirect("/coaching");
   }
 });
 
-app.post("/vakaros/analyze/:uploadId", requireAuth, async (req, res) => {
-  const lang = getLang(req);
-  const upRow = db.prepare("SELECT * FROM vakaros_uploads WHERE id = ? AND user_id = ?").get(req.params.uploadId, req.session.user.id);
-  if (!upRow) return res.status(404).json({ error: "Upload not found" });
-
-  // Get linked race log if any
-  let raceContext = "";
-  if (upRow.race_log_id) {
-    const race = db.prepare("SELECT * FROM race_logs WHERE id = ?").get(upRow.race_log_id);
-    if (race) {
-      raceContext = `\n\nLinked Race Result:\n- Event: ${race.race_name} (${race.race_date})\n- Location: ${race.location || "N/A"}\n- Finish: ${race.finish_position || "N/A"} of ${race.fleet_size || "N/A"}\n- Wind: ${race.wind_speed || "N/A"} ${race.wind_direction || ""}\n- Sea State: ${race.sea_state || "N/A"}\n- Sails: Main ${race.main_maker || ""} ${race.mainsail_used || ""}, Jib ${race.jib_maker || ""} ${race.jib_used || ""}\n- Mast Rake: ${race.mast_rake || "N/A"}, Shroud Tension: ${race.shroud_tension || "N/A"}\n- Notes: ${race.notes || "None"}`;
-    }
-  }
-
+// Full coaching report — uses ALL race history + optional Vakaros data
+app.post("/coaching/generate", requireAuth, async (req, res) => {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return res.status(500).json({ error: "ANTHROPIC_API_KEY not configured. Set it in Railway environment variables." });
+
+  const userId = req.session.user.id;
+
+  // Gather ALL data sources
+  const allLogs = db.prepare("SELECT * FROM race_logs WHERE user_id = ? ORDER BY race_date DESC").all(userId);
+  const vakarosUploads = db.prepare("SELECT * FROM vakaros_uploads WHERE user_id = ? ORDER BY created_at DESC LIMIT 5").all(userId);
+  const user = db.prepare("SELECT * FROM users WHERE id = ?").get(userId);
+
+  if (allLogs.length === 0) return res.status(400).json({ error: "Log at least one race or practice session first to get coaching." });
+
+  // Build race history summary
+  const raceHistory = allLogs.slice(0, 30).map(r => {
+    const parts = [`${r.race_name} (${r.race_date})`];
+    if (r.location) parts.push(`Location: ${r.location}`);
+    if (r.finish_position) parts.push(`Finish: ${r.finish_position}${r.fleet_size ? ' of ' + r.fleet_size : ''}`);
+    if (r.wind_speed) parts.push(`Wind: ${r.wind_speed}${r.wind_direction ? ' ' + r.wind_direction : ''}`);
+    if (r.sea_state) parts.push(`Sea: ${r.sea_state}`);
+    if (r.main_maker || r.mainsail_used) parts.push(`Main: ${r.main_maker || ''} ${r.mainsail_used || ''}`);
+    if (r.jib_maker || r.jib_used) parts.push(`Jib: ${r.jib_maker || ''} ${r.jib_used || ''}`);
+    if (r.mast_rake) parts.push(`Mast rake: ${r.mast_rake}`);
+    if (r.shroud_tension) parts.push(`Shroud tension: ${r.shroud_tension}`);
+    if (r.cunningham) parts.push(`Cunningham: ${r.cunningham}`);
+    if (r.vang) parts.push(`Vang: ${r.vang}`);
+    if (r.outhaul) parts.push(`Outhaul: ${r.outhaul}`);
+    if (r.jib_lead) parts.push(`Jib lead: ${r.jib_lead}`);
+    if (r.performance_rating) parts.push(`Self-rating: ${r.performance_rating}/10`);
+    if (r.notes) parts.push(`Notes: ${r.notes}`);
+    return parts.join(' | ');
+  }).join('\n');
+
+  // Separate practice sessions (no finish position)
+  const practices = allLogs.filter(r => !r.finish_position && r.notes);
+  const practiceNotes = practices.slice(0, 15).map(r =>
+    `${r.race_name} (${r.race_date}): ${r.notes}`
+  ).join('\n');
+
+  // Results trend
+  const results = allLogs.filter(r => r.finish_position && r.fleet_size).slice(0, 20);
+  const resultsSummary = results.length > 0
+    ? results.map(r => `${r.race_name} ${r.race_date}: ${r.finish_position}/${r.fleet_size}`).join(', ')
+    : 'No race results with positions logged yet';
+
+  // Vakaros data summary
+  let vakarosContext = '';
+  if (vakarosUploads.length > 0) {
+    vakarosContext = '\n\n--- VAKAROS TELEMETRY DATA ---\n' + vakarosUploads.map(v =>
+      `Session: ${v.filename} (${v.created_at})\nDuration: ${v.duration_minutes}m | Distance: ${v.distance_nm}nm | Avg Speed: ${v.avg_speed}kts | Max: ${v.max_speed}kts | Avg Heel: ${v.avg_heel}° | Avg VMG: ${v.avg_vmg}kts | Tacks: ${v.tack_count} | Gybes: ${v.gybe_count}\nSampled data:\n${v.csv_summary || '(no raw data)'}`
+    ).join('\n\n');
+  }
 
   try {
     const client = new Anthropic({ apiKey });
     const msg = await client.messages.create({
       model: "claude-sonnet-4-20250514",
-      max_tokens: 2000,
-      system: `You are an expert Snipe class sailing coach with 30+ years of experience coaching Olympic-level Snipe sailors. You have deep knowledge of Snipe boat tuning, rig setup, sail trim, and race tactics. You analyze Vakaros sensor data to give specific, actionable coaching advice.
+      max_tokens: 3000,
+      system: `You are an expert Snipe class sailing coach with 30+ years of experience coaching at the Olympic level. You have deep knowledge of:
 
-Your analysis style:
-- Be direct and specific, not generic
-- Reference actual numbers from the data
-- Compare to Snipe class benchmarks where relevant (e.g., target upwind VMG in 10-12kts is typically 3.2-3.6 kts for competitive Snipe sailors)
-- Give 2-3 specific drills or focus areas for the next practice session
-- If race result data is available, connect the sensor data patterns to the result
+SNIPE TUNING by wind range:
+- Light air (0-8 kts): Mast rake 25'8"-25'10", shroud tension loose (16-18), jib leads forward, minimal cunningham/vang, outhaul eased
+- Medium air (8-15 kts): Mast rake 25'6"-25'8", shroud tension medium (20-24), cunningham to first wrinkle, moderate vang, outhaul moderate
+- Heavy air (15+ kts): Mast rake 25'4"-25'6", shroud tension firm (26-30), max cunningham, heavy vang, outhaul tight, jib leads back
+- Spreader length: typically 18.5"-19.5" with 2-4" sweep
 
-Format your report with these sections:
-## Session Overview
-## Upwind Performance
-## Downwind Performance
-## Boat Handling
-## Key Recommendations for Next Session`,
+SNIPE TACTICS:
+- Starting: line bias recognition, acceleration timing, managing dirty air
+- Upwind: pointing vs. footing modes, playing shifts and puffs, tacking efficiency
+- Mark roundings: wide entry/tight exit, smooth transitions, crew coordination
+- Downwind: wave angles, gybe timing, apparent wind sailing
+- VMG targets: 3.2-3.6 kts upwind in 10-12 kts, 4.0-5.0 kts reaching/downwind
+
+YOUR COACHING STYLE:
+- Be direct, specific, and actionable — never generic
+- Reference actual numbers and patterns from the sailor's data
+- Identify the TOP 3 things that will make the biggest improvement
+- Connect tuning choices to results where possible
+- When suggesting drills, be specific about what to practice and how to measure improvement
+- Reference "Crew College" modules when relevant (e.g., "Review the Upwind Tuning module in Crew College for detailed guidance on this")
+- If Vakaros telemetry is available, add a dedicated Telemetry Insights section
+
+FORMAT YOUR REPORT WITH THESE EXACT SECTIONS:
+## Overall Performance Summary
+(Based on recent results trend — are they improving, plateauing, or regressing?)
+
+## Top 3 Priority Improvements
+(The three things that will have the biggest impact right now)
+
+## Upwind Analysis
+(Pointing, VMG, tack efficiency, sail trim patterns)
+
+## Downwind Analysis
+(Speed, gybe efficiency, wave technique)
+
+## Boat Handling & Starts
+(Tacking, gybing, mark roundings, start execution)
+
+## What to Focus on in Your NEXT Session
+(Specific drills with measurable goals)
+
+## Relevant Crew College Sections to Review
+(Point them to specific learning resources)
+
+${vakarosUploads.length > 0 ? '## Telemetry Insights\n(Analysis of Vakaros sensor data patterns)' : ''}`,
       messages: [{
         role: "user",
-        content: `Analyze this Vakaros sailing data from a Snipe class sailboat session:
+        content: `Generate a comprehensive coaching report for this Snipe sailor.
 
-Session Stats:
-- Duration: ${upRow.duration_minutes} minutes
-- Distance: ${upRow.distance_nm} nm
-- Avg Speed: ${upRow.avg_speed} kts, Max Speed: ${upRow.max_speed} kts
-- Avg Heel: ${upRow.avg_heel}°
-- Avg VMG: ${upRow.avg_vmg} kts
-- Tacks: ${upRow.tack_count}, Gybes: ${upRow.gybe_count}
-${raceContext}
+SAILOR PROFILE:
+- Name: ${user.display_name || user.username}
+- Boat: Snipe #${user.snipe_number || 'unknown'}
+- Total races logged: ${allLogs.length}
+- Results with positions: ${results.length}
 
-Sampled GPS/Sensor Data (${upRow.row_count} total data points, sampled):
-${upRow.csv_summary}
+RECENT RESULTS TREND:
+${resultsSummary}
 
-Provide a detailed coaching report with specific improvements for this Snipe sailor.`
+FULL RACE HISTORY (most recent first):
+${raceHistory}
+
+${practiceNotes ? 'PRACTICE SESSION NOTES:\n' + practiceNotes : '(No practice sessions with notes logged)'}
+${vakarosContext}
+
+Analyze ALL of this data to provide a detailed, personalized coaching report. Look for patterns across races — what conditions they do well in, what settings they use, where results drop off, and what the notes reveal about their sailing.`
       }]
     });
 
     const report = msg.content[0].text;
 
     // Save coaching report
-    db.prepare("INSERT INTO vakaros_coaching (user_id, upload_id, race_log_id, coaching_report) VALUES (?,?,?,?)")
-      .run(req.session.user.id, upRow.id, upRow.race_log_id, report);
+    db.prepare("INSERT INTO coaching_reports (user_id, report_type, race_count, has_vakaros, coaching_report) VALUES (?,?,?,?,?)")
+      .run(userId, 'full', allLogs.length, vakarosUploads.length > 0 ? 1 : 0, report);
 
     res.json({ report });
   } catch (err) {
@@ -5838,7 +5918,12 @@ Provide a detailed coaching report with specific improvements for this Snipe sai
 app.post("/vakaros/delete/:uploadId", requireAuth, (req, res) => {
   db.prepare("DELETE FROM vakaros_coaching WHERE upload_id = ? AND user_id = ?").run(req.params.uploadId, req.session.user.id);
   db.prepare("DELETE FROM vakaros_uploads WHERE id = ? AND user_id = ?").run(req.params.uploadId, req.session.user.id);
-  res.redirect("/vakaros");
+  res.redirect("/coaching");
+});
+
+app.post("/coaching/delete/:reportId", requireAuth, (req, res) => {
+  db.prepare("DELETE FROM coaching_reports WHERE id = ? AND user_id = ?").run(req.params.reportId, req.session.user.id);
+  res.redirect("/coaching");
 });
 
 // --- HTML TEMPLATES ---
@@ -6234,7 +6319,7 @@ function renderPage(content, user, lang, showHero) {
       background: linear-gradient(135deg,#f59e0b,#d97706); color: #fff;
       border-radius: 6px; font-weight: 700;
     }
-    /* Vakaros Coach */
+    /* Coaching */
     .vak-stats-grid {
       display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
       gap: 12px; margin: 20px 0;
@@ -6313,7 +6398,7 @@ function renderPage(content, user, lang, showHero) {
       <a href="/quick-log" class="btn-quick-entry">&#9889; Quick</a>
       <a href="/log" class="btn-accent">${L('logRace')}</a>
       <a href="/performance">${L('perfMetrics')}</a>
-      <a href="/vakaros" style="color:#a3f0d0;">📡 Vakaros Coach</a>
+      <a href="/coaching" style="color:#a3f0d0;">&#127919; Coaching</a>
       <a href="/magic">${L('magic')}</a>
       <a href="/tuning-guides">${L('tuningGuides')}</a>
       <a href="/racing-rules">${L('racingRules')}</a>
@@ -6561,133 +6646,148 @@ function sailorPage(sailor, logs, lang) {
   </div>`;
 }
 
-function vakarosPage(raceLogs, uploads, highlightUploadId, error, lang, successMsg) {
+function coachingPage(raceLogs, uploads, pastReports, highlightUploadId, error, lang, successMsg) {
   lang = lang || 'en';
-  const highlighted = highlightUploadId ? uploads.find(u => u.id === highlightUploadId) : null;
+  const raceCount = raceLogs.length;
+  const practiceCount = raceLogs.filter(r => !r.finish_position && r.notes).length;
+  const hasVakaros = uploads.length > 0;
 
   return `<div class="container">
-    <h2>📡 Vakaros Coach <span class="sub">Upload sensor data &amp; get AI coaching</span></h2>
+    <h2>&#127919; AI Sailing Coach <span class="sub">Personalized coaching based on your race history, results, and sensor data</span></h2>
     ${successMsg ? `<div class="alert alert-success" style="font-size:1rem;">${escapeHtml(successMsg)}</div>` : ""}
     ${error ? `<div class="alert alert-error">${escapeHtml(error)}</div>` : ""}
 
-    <div class="form-card wide" style="margin-bottom:24px;">
-      <h3 style="color:#0b3d6e;margin-bottom:16px;">Upload Vakaros Data</h3>
-
-      <div style="background:#f0f7ff;border:1px solid #d0e2f7;border-radius:12px;padding:20px;margin-bottom:20px;">
-        <h4 style="color:#0b3d6e;margin:0 0 12px;font-size:0.95rem;">Fastest way (installed app):</h4>
-        <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px;">
-          <div style="display:flex;align-items:flex-start;gap:10px;">
-            <span style="background:#0b3d6e;color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.85rem;flex-shrink:0;">1</span>
-            <span style="font-size:0.93rem;color:#333;padding-top:3px;">Open the <strong>Vakaros Connect</strong> app on your phone</span>
-          </div>
-          <div style="display:flex;align-items:flex-start;gap:10px;">
-            <span style="background:#0b3d6e;color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.85rem;flex-shrink:0;">2</span>
-            <span style="font-size:0.93rem;color:#333;padding-top:3px;">Tap <strong>Sessions</strong> and select the session you want to analyze</span>
-          </div>
-          <div style="display:flex;align-items:flex-start;gap:10px;">
-            <span style="background:#059669;color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.85rem;flex-shrink:0;">3</span>
-            <span style="font-size:0.93rem;color:#333;padding-top:3px;">Tap <strong>Export</strong> &rarr; <strong>Share</strong> &rarr; and select <strong>Snipeovation</strong> from the share sheet</span>
-          </div>
-        </div>
-        <p style="color:#059669;font-weight:700;font-size:0.9rem;margin:0 0 4px;">That's it &mdash; your data will appear here automatically!</p>
-        <p style="color:#888;font-size:0.8rem;margin:0;">Requires Snipeovation to be installed on your home screen. <a href="#" onclick="if(window.deferredPwaPrompt){window.deferredPwaPrompt.prompt();}else{alert('Open this site in your mobile browser and tap Add to Home Screen.');}return false;" style="color:#1a6fb5;font-weight:600;">Install now</a></p>
-        <hr style="border:none;border-top:1px solid #d0e2f7;margin:16px 0;">
-        <h4 style="color:#0b3d6e;margin:0 0 10px;font-size:0.9rem;">Or upload manually:</h4>
-        <p style="color:#555;font-size:0.88rem;margin:0;">Export CSV from Vakaros Connect, save to your device, then use the button below.</p>
+    <!-- PRIMARY: Get Coaching Report -->
+    <div class="form-card wide" style="margin-bottom:24px;border:2px solid #0b3d6e;">
+      <div style="text-align:center;margin-bottom:20px;">
+        <h3 style="color:#0b3d6e;margin:0 0 8px;font-size:1.3rem;">Get My Coaching Report</h3>
+        <p style="color:#555;font-size:0.93rem;margin:0;">Claude AI analyzes your complete sailing history and generates personalized coaching</p>
       </div>
 
-      <form method="POST" action="/vakaros/upload" enctype="multipart/form-data" id="vak-upload-form">
-        <div class="vak-upload-zone" id="vak-dropzone" onclick="document.getElementById('vak-file-input').click()">
-          <div style="font-size:2.5rem;margin-bottom:8px;">&#128194;</div>
-          <div style="background:linear-gradient(135deg,#0b3d6e,#1565c0);color:#fff;display:inline-block;padding:14px 32px;border-radius:12px;font-size:1.1rem;font-weight:700;margin-bottom:12px;">&#128194; Choose CSV File</div>
-          <p style="color:#666;font-size:0.9rem;">Tap to choose your Vakaros CSV file</p>
-          <div id="vak-file-status" style="display:none;margin-top:12px;padding:10px 16px;background:#ecfdf5;border:2px solid #86efac;border-radius:10px;">
-            <span style="color:#059669;font-weight:700;font-size:1rem;">&#9989;</span>
-            <span style="color:#059669;font-weight:600;font-size:0.95rem;" id="vak-file-name"></span>
-          </div>
-          <input type="file" name="vakaros_csv" id="vak-file-input" accept=".csv,.txt" style="display:none">
+      <div style="display:flex;flex-wrap:wrap;gap:12px;justify-content:center;margin-bottom:20px;">
+        <div style="display:flex;align-items:center;gap:6px;padding:8px 14px;border-radius:8px;font-size:0.88rem;font-weight:600;${raceCount > 0 ? 'background:#ecfdf5;color:#059669;border:1px solid #86efac' : 'background:#f1f5f9;color:#94a3b8;border:1px solid #e2e8f0'}">
+          ${raceCount > 0 ? '&#9989;' : '&#9744;'} Race History (${raceCount} ${raceCount === 1 ? 'race' : 'races'})
         </div>
-        <div style="text-align:center;margin-top:8px;">
-          <span style="font-size:0.8rem;color:#999;cursor:help;border-bottom:1px dashed #999;" title="CSV is a simple data file that your Vakaros app can export. It contains your speed, heading, heel angle, and GPS data from your sailing session.">What is a CSV file?</span>
+        <div style="display:flex;align-items:center;gap:6px;padding:8px 14px;border-radius:8px;font-size:0.88rem;font-weight:600;${practiceCount > 0 ? 'background:#ecfdf5;color:#059669;border:1px solid #86efac' : 'background:#f1f5f9;color:#94a3b8;border:1px solid #e2e8f0'}">
+          ${practiceCount > 0 ? '&#9989;' : '&#9744;'} Practice Notes (${practiceCount})
         </div>
-        <div style="margin-top:16px;">
-          <label style="font-weight:600;color:#333;font-size:0.9rem;display:block;margin-bottom:6px;">Link to Race Log (optional)</label>
-          <select name="race_log_id" style="width:100%;padding:10px 12px;border:2px solid #e2e8f0;border-radius:8px;font-size:0.95rem;">
-            <option value="">-- No linked race --</option>
-            ${raceLogs.map(r => `<option value="${r.id}">${escapeHtml(r.race_date)} &mdash; ${escapeHtml(r.race_name)}${r.location ? " (" + escapeHtml(r.location) + ")" : ""}</option>`).join("")}
-          </select>
+        <div style="display:flex;align-items:center;gap:6px;padding:8px 14px;border-radius:8px;font-size:0.88rem;font-weight:600;${hasVakaros ? 'background:#ecfdf5;color:#059669;border:1px solid #86efac' : 'background:#fff7ed;color:#c2410c;border:1px solid #fed7aa'}">
+          ${hasVakaros ? '&#9989;' : '&#128314;'} Vakaros Data ${hasVakaros ? '(' + uploads.length + ' sessions)' : '(optional)'}
         </div>
-        <div style="margin-top:16px;text-align:center;">
-          <button type="submit" class="btn btn-primary" style="padding:12px 32px;font-size:1rem;" id="vak-upload-btn">Upload &amp; Analyze</button>
-        </div>
-      </form>
-    </div>
-
-    ${highlighted ? `
-    <div class="form-card wide" id="latest-upload" style="margin-bottom:24px;border:2px solid #86efac;">
-      <h3 style="color:#059669;margin-bottom:4px;">Session Uploaded: ${escapeHtml(highlighted.filename || 'Vakaros Data')}</h3>
-      <p style="color:#666;font-size:0.85rem;margin-bottom:16px;">${highlighted.row_count} data points &bull; ${highlighted.duration_minutes} min${highlighted.race_name ? ' &bull; Linked to ' + escapeHtml(highlighted.race_name) : ''}</p>
-      <div class="vak-stats-grid">
-        <div class="vak-stat"><div class="vak-num">${highlighted.avg_speed}</div><div class="vak-label">Avg Speed (kts)</div></div>
-        <div class="vak-stat"><div class="vak-num">${highlighted.max_speed}</div><div class="vak-label">Max Speed (kts)</div></div>
-        <div class="vak-stat"><div class="vak-num">${highlighted.avg_heel}&deg;</div><div class="vak-label">Avg Heel</div></div>
-        <div class="vak-stat"><div class="vak-num">${highlighted.avg_vmg}</div><div class="vak-label">Avg VMG (kts)</div></div>
-        <div class="vak-stat"><div class="vak-num">${highlighted.tack_count}</div><div class="vak-label">Tacks</div></div>
-        <div class="vak-stat"><div class="vak-num">${highlighted.gybe_count}</div><div class="vak-label">Gybes</div></div>
-        <div class="vak-stat"><div class="vak-num">${highlighted.distance_nm}</div><div class="vak-label">Distance (nm)</div></div>
-        <div class="vak-stat"><div class="vak-num">${highlighted.duration_minutes}m</div><div class="vak-label">Duration</div></div>
       </div>
 
-      ${highlighted.coaching_report ? `
-        <div class="vak-coaching-report" id="coaching-report-${highlighted.id}">${highlighted.coaching_report.replace(/## /g, '<h3>').replace(/\n/g, '<br>')}</div>
-        <div style="margin-top:12px;display:flex;gap:12px;flex-wrap:wrap;">
-          <button class="btn-coaching btn-read-aloud" onclick="toggleReadAloud(this, 'coaching-report-${highlighted.id}')">🔊 Read Aloud</button>
+      ${raceCount === 0 ? `
+        <div style="text-align:center;padding:16px;background:#fefce8;border-radius:10px;border:1px solid #fde68a;">
+          <p style="color:#92400e;font-weight:600;margin:0;">Log at least one race or practice session to get coaching.</p>
+          <a href="/quick-log" class="btn btn-primary" style="margin-top:12px;display:inline-block;">&#9889; Log Your First Race</a>
         </div>
       ` : `
-        <div style="text-align:center;margin-top:16px;">
-          <button class="btn-coaching btn-analyze" id="analyze-btn-${highlighted.id}" onclick="requestCoaching(${highlighted.id})">
-            🤖 Get AI Coaching Report
+        <div style="text-align:center;">
+          <button class="btn-coaching btn-analyze" id="full-coaching-btn" onclick="requestFullCoaching()" style="padding:16px 40px;font-size:1.15rem;">
+            &#129302; Generate My Coaching Report
           </button>
-          <div id="coaching-result-${highlighted.id}"></div>
+          <div id="full-coaching-result"></div>
+          <p style="color:#888;font-size:0.8rem;margin-top:10px;">Analysis uses Claude AI to review all your logged data</p>
         </div>
       `}
     </div>
-    ` : ""}
 
-    ${uploads.length > 0 ? `
-    <h3 style="color:#0b3d6e;margin-bottom:12px;">Upload History</h3>
-    ${uploads.filter(u => u.id !== highlightUploadId).map(u => `
+    ${!hasVakaros ? `
+    <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:16px 20px;margin-bottom:20px;">
+      <p style="color:#c2410c;font-weight:600;margin:0 0 4px;font-size:0.93rem;">&#128314; Want even more detailed coaching?</p>
+      <p style="color:#78350f;font-size:0.88rem;margin:0;">Upload Vakaros sensor data below to add speed, heel angle, VMG, and tack/gybe analysis to your coaching report.</p>
+    </div>
+    ` : ''}
+
+    <!-- Past coaching reports -->
+    ${pastReports.length > 0 ? `
+    <h3 style="color:#0b3d6e;margin-bottom:12px;">Past Coaching Reports</h3>
+    ${pastReports.map(r => `
       <div class="vak-history-card">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;">
           <div>
-            <h4>${escapeHtml(u.filename || 'Vakaros Data')}${u.race_name ? ' &mdash; ' + escapeHtml(u.race_name) : ''}</h4>
-            <div class="vak-history-meta">
-              ${escapeHtml(u.race_date || u.created_at.slice(0,10))} &bull; ${u.avg_speed} kts avg &bull; ${u.max_speed} kts max &bull; ${u.tack_count} tacks &bull; ${u.distance_nm} nm &bull; ${u.duration_minutes}m
-            </div>
+            <h4>Coaching Report &mdash; ${escapeHtml(r.created_at.slice(0,10))}</h4>
+            <div class="vak-history-meta">${r.race_count} races analyzed${r.has_vakaros ? ' &bull; includes Vakaros data' : ''}</div>
           </div>
-          <form method="POST" action="/vakaros/delete/${u.id}" style="display:inline;" onsubmit="return confirm('Delete this upload and its coaching report?')">
+          <form method="POST" action="/coaching/delete/${r.id}" style="display:inline;" onsubmit="return confirm('Delete this coaching report?')">
             <button type="submit" class="btn btn-danger">Delete</button>
           </form>
         </div>
-        ${u.coaching_report ? `
-          <details style="margin-top:8px;">
-            <summary style="cursor:pointer;color:#0b3d6e;font-weight:600;font-size:0.9rem;">View Coaching Report</summary>
-            <div class="vak-coaching-report" id="coaching-report-${u.id}" style="margin-top:8px;">${u.coaching_report.replace(/## /g, '<h3>').replace(/\n/g, '<br>')}</div>
-            <div style="margin-top:8px;display:flex;gap:12px;flex-wrap:wrap;">
-              <button class="btn-coaching btn-read-aloud" onclick="toggleReadAloud(this, 'coaching-report-${u.id}')">🔊 Read Aloud</button>
-            </div>
-          </details>
-        ` : `
-          <div style="margin-top:8px;">
-            <button class="btn-coaching btn-analyze" id="analyze-btn-${u.id}" onclick="requestCoaching(${u.id})" style="font-size:0.85rem;padding:8px 16px;">
-              🤖 Get AI Coaching
-            </button>
-            <div id="coaching-result-${u.id}"></div>
+        <details style="margin-top:8px;">
+          <summary style="cursor:pointer;color:#0b3d6e;font-weight:600;font-size:0.9rem;">View Report</summary>
+          <div class="vak-coaching-report" id="coaching-past-${r.id}" style="margin-top:8px;">${r.coaching_report.replace(/## /g, '<h3>').replace(/\n/g, '<br>')}</div>
+          <div style="margin-top:8px;display:flex;gap:12px;flex-wrap:wrap;">
+            <button class="btn-coaching btn-read-aloud" onclick="toggleReadAloud(this, 'coaching-past-${r.id}')">&#128266; Read Aloud</button>
           </div>
-        `}
+        </details>
       </div>
     `).join("")}
-    ` : '<div class="empty-state"><h3>No uploads yet</h3><p>Upload your first Vakaros CSV to get started!</p></div>'}
+    ` : ''}
+
+    <!-- SECONDARY: Vakaros Upload -->
+    <details style="margin-top:24px;" ${uploads.length > 0 ? 'open' : ''}>
+      <summary style="cursor:pointer;color:#0b3d6e;font-weight:700;font-size:1.1rem;padding:12px 0;">
+        &#128225; Vakaros Sensor Data ${uploads.length > 0 ? '<span style="font-size:0.85rem;color:#059669;font-weight:600;">(' + uploads.length + ' uploaded)</span>' : '<span style="font-size:0.85rem;color:#888;font-weight:400;">(optional &mdash; enhances coaching)</span>'}
+      </summary>
+
+      <div class="form-card wide" style="margin-top:12px;margin-bottom:16px;">
+        <div style="background:#f0f7ff;border:1px solid #d0e2f7;border-radius:12px;padding:16px;margin-bottom:16px;">
+          <h4 style="color:#0b3d6e;margin:0 0 10px;font-size:0.9rem;">Share from Vakaros (installed app):</h4>
+          <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="background:#0b3d6e;color:#fff;border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.75rem;flex-shrink:0;">1</span>
+              <span style="font-size:0.88rem;color:#333;">Open <strong>Vakaros Connect</strong> &rarr; <strong>Sessions</strong> &rarr; select session</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="background:#059669;color:#fff;border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.75rem;flex-shrink:0;">2</span>
+              <span style="font-size:0.88rem;color:#333;">Tap <strong>Export</strong> &rarr; <strong>Share</strong> &rarr; choose <strong>Snipeovation</strong></span>
+            </div>
+          </div>
+          <p style="color:#059669;font-weight:600;font-size:0.85rem;margin:0;">Data appears here automatically!</p>
+          <hr style="border:none;border-top:1px solid #d0e2f7;margin:12px 0;">
+          <p style="color:#555;font-size:0.82rem;margin:0;">Or upload manually below. <a href="#" onclick="if(window.deferredPwaPrompt){window.deferredPwaPrompt.prompt();}else{alert('Open in your mobile browser and tap Add to Home Screen.');}return false;" style="color:#1a6fb5;font-weight:600;">Install app for sharing</a></p>
+        </div>
+
+        <form method="POST" action="/vakaros/upload" enctype="multipart/form-data">
+          <div class="vak-upload-zone" id="vak-dropzone" onclick="document.getElementById('vak-file-input').click()">
+            <div style="background:linear-gradient(135deg,#0b3d6e,#1565c0);color:#fff;display:inline-block;padding:12px 28px;border-radius:12px;font-size:1rem;font-weight:700;margin-bottom:8px;">&#128194; Choose CSV File</div>
+            <p style="color:#666;font-size:0.85rem;">Tap to choose your Vakaros CSV file</p>
+            <div id="vak-file-status" style="display:none;margin-top:10px;padding:8px 14px;background:#ecfdf5;border:2px solid #86efac;border-radius:10px;">
+              <span style="color:#059669;font-weight:700;">&#9989;</span>
+              <span style="color:#059669;font-weight:600;font-size:0.9rem;" id="vak-file-name"></span>
+            </div>
+            <input type="file" name="vakaros_csv" id="vak-file-input" accept=".csv,.txt,.vkx" style="display:none">
+          </div>
+          <div style="margin-top:12px;">
+            <label style="font-weight:600;color:#333;font-size:0.85rem;display:block;margin-bottom:4px;">Link to Race Log (optional)</label>
+            <select name="race_log_id" style="width:100%;padding:8px 10px;border:2px solid #e2e8f0;border-radius:8px;font-size:0.9rem;">
+              <option value="">-- No linked race --</option>
+              ${raceLogs.map(r => `<option value="${r.id}">${escapeHtml(r.race_date)} &mdash; ${escapeHtml(r.race_name)}${r.location ? " (" + escapeHtml(r.location) + ")" : ""}</option>`).join("")}
+            </select>
+          </div>
+          <div style="margin-top:12px;text-align:center;">
+            <button type="submit" class="btn btn-primary" style="padding:10px 28px;">Upload Vakaros Data</button>
+          </div>
+        </form>
+      </div>
+
+      ${uploads.length > 0 ? `
+      <h4 style="color:#0b3d6e;margin-bottom:10px;">Uploaded Sessions</h4>
+      ${uploads.map(u => `
+        <div class="vak-history-card">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;">
+            <div>
+              <h4 style="font-size:0.95rem;">${escapeHtml(u.filename || 'Vakaros Data')}${u.race_name ? ' &mdash; ' + escapeHtml(u.race_name) : ''}</h4>
+              <div class="vak-history-meta">${u.avg_speed} kts avg &bull; ${u.max_speed} kts max &bull; ${u.avg_heel}&deg; heel &bull; ${u.tack_count} tacks &bull; ${u.distance_nm} nm &bull; ${u.duration_minutes}m</div>
+            </div>
+            <form method="POST" action="/vakaros/delete/${u.id}" style="display:inline;" onsubmit="return confirm('Delete this upload?')">
+              <button type="submit" class="btn btn-danger">Delete</button>
+            </form>
+          </div>
+        </div>
+      `).join("")}
+      ` : ''}
+    </details>
   </div>
 
   <script>
@@ -6721,32 +6821,32 @@ function vakarosPage(raceLogs, uploads, highlightUploadId, error, lang, successM
     });
   })();
 
-  // AI Coaching request
-  function requestCoaching(uploadId) {
-    var btn = document.getElementById('analyze-btn-' + uploadId);
-    var resultDiv = document.getElementById('coaching-result-' + uploadId);
+  // Full coaching report (no upload needed)
+  function requestFullCoaching() {
+    var btn = document.getElementById('full-coaching-btn');
+    var resultDiv = document.getElementById('full-coaching-result');
     if (!btn || !resultDiv) return;
     btn.disabled = true;
-    btn.innerHTML = '<span class="vak-spinner"></span> Analyzing with Claude AI...';
-    fetch('/vakaros/analyze/' + uploadId, { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+    btn.innerHTML = '<span class="vak-spinner"></span> Claude AI is analyzing your sailing history...';
+    fetch('/coaching/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' } })
       .then(function(r) { return r.json(); })
       .then(function(data) {
         if (data.error) {
-          btn.innerHTML = '🤖 Get AI Coaching Report';
+          btn.innerHTML = '&#129302; Generate My Coaching Report';
           btn.disabled = false;
           resultDiv.innerHTML = '<div class="alert alert-error" style="margin-top:12px;">' + data.error + '</div>';
           return;
         }
         btn.style.display = 'none';
         var reportHtml = data.report.replace(/## /g, '<h3>').replace(/\\n/g, '<br>').replace(/\n/g, '<br>');
-        var reportId = 'coaching-report-new-' + uploadId;
-        resultDiv.innerHTML = '<div class="vak-coaching-report" id="' + reportId + '" style="margin-top:16px;">' + reportHtml + '</div>' +
-          '<div style="margin-top:12px;display:flex;gap:12px;flex-wrap:wrap;">' +
-          '<button class="btn-coaching btn-read-aloud" onclick="toggleReadAloud(this, \\'' + reportId + '\\')">🔊 Read Aloud</button>' +
+        resultDiv.innerHTML = '<div class="vak-coaching-report" id="full-coaching-report" style="margin-top:20px;">' + reportHtml + '</div>' +
+          '<div style="margin-top:12px;display:flex;gap:12px;flex-wrap:wrap;justify-content:center;">' +
+          '<button class="btn-coaching btn-read-aloud" onclick="toggleReadAloud(this, \\'full-coaching-report\\')">&#128266; Read Aloud</button>' +
           '</div>';
+        document.getElementById('full-coaching-report').scrollIntoView({ behavior: 'smooth', block: 'start' });
       })
       .catch(function(err) {
-        btn.innerHTML = '🤖 Get AI Coaching Report';
+        btn.innerHTML = '&#129302; Generate My Coaching Report';
         btn.disabled = false;
         resultDiv.innerHTML = '<div class="alert alert-error" style="margin-top:12px;">Request failed. Check your connection.</div>';
       });
@@ -6758,7 +6858,7 @@ function vakarosPage(raceLogs, uploads, highlightUploadId, error, lang, successM
     if (currentUtterance && speechSynthesis.speaking) {
       speechSynthesis.cancel();
       currentUtterance = null;
-      btn.innerHTML = '🔊 Read Aloud';
+      btn.innerHTML = '&#128266; Read Aloud';
       btn.classList.remove('speaking');
       return;
     }
@@ -6772,11 +6872,11 @@ function vakarosPage(raceLogs, uploads, highlightUploadId, error, lang, successM
     currentUtterance = new SpeechSynthesisUtterance(text);
     currentUtterance.rate = 0.95;
     currentUtterance.onend = function() {
-      btn.innerHTML = '🔊 Read Aloud';
+      btn.innerHTML = '&#128266; Read Aloud';
       btn.classList.remove('speaking');
       currentUtterance = null;
     };
-    btn.innerHTML = '⏹ Stop Reading';
+    btn.innerHTML = '&#9209; Stop Reading';
     btn.classList.add('speaking');
     speechSynthesis.speak(currentUtterance);
   }
