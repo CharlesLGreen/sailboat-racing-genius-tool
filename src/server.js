@@ -5499,6 +5499,13 @@ app.get("/api/performance-data", requireAuth, (req, res) => {
   res.json(logs);
 });
 
+// --- Performance Trends ---
+app.get("/trends", requireAuth, (req, res) => {
+  const lang = getLang(req);
+  const logs = db.prepare("SELECT * FROM race_logs WHERE user_id = ? ORDER BY race_date ASC").all(req.session.user.id);
+  res.send(renderPage(trendsPage(logs, lang), req.session.user, lang));
+});
+
 app.get("/performance", requireAuth, (req, res) => {
   const lang = getLang(req);
   const L = (k) => t(k, lang);
@@ -6604,6 +6611,7 @@ function renderPage(content, user, lang, showHero) {
       <a href="/quick-log" class="btn-quick-entry">&#9889; Quick</a>
       <a href="/log" class="btn-accent">${L('logRace')}</a>
       <a href="/performance">${L('perfMetrics')}</a>
+      <a href="/trends">&#128200; Trends</a>
       <a href="/coaching" style="color:#a3f0d0;">&#127919; Coaching + Vakaros</a>
       <a href="/magic">${L('magic')}</a>
       <a href="/tuning-guides">${L('tuningGuides')}</a>
@@ -7934,6 +7942,386 @@ function profilePage(userData, success) {
       </div>
     </div>
   </div>`;
+}
+
+// --- Performance Trends page ---
+
+function trendsPage(logs, lang) {
+  lang = lang || 'en';
+  // Split races (has finish_position) vs practice (no finish_position)
+  const races = logs.filter(l => l.finish_position && parseInt(l.finish_position) > 0);
+  const practices = logs.filter(l => !l.finish_position || parseInt(l.finish_position) === 0 || isNaN(parseInt(l.finish_position)));
+  const totalLogs = logs.length;
+
+  // Compute stats
+  const positions = races.map(r => parseInt(r.finish_position)).filter(p => !isNaN(p));
+  const best = positions.length ? Math.min(...positions) : '-';
+  const worst = positions.length ? Math.max(...positions) : '-';
+  const avg = positions.length ? (positions.reduce((a, b) => a + b, 0) / positions.length).toFixed(1) : '-';
+
+  // Percentage scores (lower = better)
+  const pctScores = races
+    .filter(r => r.fleet_size && parseInt(r.fleet_size) > 0)
+    .map(r => {
+      const pos = parseInt(r.finish_position);
+      const fleet = parseInt(r.fleet_size);
+      return ((pos / fleet) * 100).toFixed(1);
+    });
+  const avgPct = pctScores.length ? (pctScores.reduce((a, b) => a + parseFloat(b), 0) / pctScores.length).toFixed(1) : '-';
+
+  // Prepare JSON data for charts (races only, sorted by date)
+  const chartData = races.map(r => ({
+    date: r.race_date,
+    name: r.race_name,
+    position: parseInt(r.finish_position),
+    fleet: r.fleet_size ? parseInt(r.fleet_size) : null,
+    pct: (r.fleet_size && parseInt(r.fleet_size) > 0) ? parseFloat(((parseInt(r.finish_position) / parseInt(r.fleet_size)) * 100).toFixed(1)) : null,
+    location: r.location || ''
+  })).sort((a, b) => a.date.localeCompare(b.date));
+
+  // Monthly breakdown for race vs practice bar chart
+  const monthMap = {};
+  logs.forEach(l => {
+    const m = l.race_date ? l.race_date.slice(0, 7) : 'Unknown';
+    if (!monthMap[m]) monthMap[m] = { races: 0, practices: 0 };
+    const pos = parseInt(l.finish_position);
+    if (pos > 0) monthMap[m].races++;
+    else monthMap[m].practices++;
+  });
+  const months = Object.keys(monthMap).sort();
+  const breakdownData = {
+    labels: months.map(m => { const d = new Date(m + '-01'); return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }); }),
+    races: months.map(m => monthMap[m].races),
+    practices: months.map(m => monthMap[m].practices)
+  };
+
+  return `<div class="container">
+    <h2>&#128200; Performance Trends <span class="sub">Track your racing progress over time</span></h2>
+
+    ${races.length === 0 ? `
+      <div class="form-card wide" style="text-align:center;padding:40px;">
+        <h3 style="color:#0b3d6e;margin-bottom:8px;">No race results yet</h3>
+        <p style="color:#666;margin-bottom:16px;">Log some races with finish positions to see your trends.</p>
+        <a href="/quick-log" class="btn btn-primary">&#9889; Log a Race</a>
+      </div>
+    ` : `
+
+    <!-- Filter -->
+    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:20px;">
+      <label style="font-weight:600;color:#0b3d6e;font-size:0.9rem;">Show:</label>
+      <select id="trends-filter" onchange="applyFilter()" style="padding:8px 14px;border:2px solid #e2e8f0;border-radius:8px;font-size:0.9rem;font-weight:600;color:#0b3d6e;">
+        <option value="5">Last 5 Races</option>
+        <option value="10" selected>Last 10 Races</option>
+        <option value="20">Last 20 Races</option>
+        <option value="all">All Time</option>
+      </select>
+    </div>
+
+    <!-- Stats cards -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:24px;" id="stats-cards">
+      <div class="trends-stat-card">
+        <div class="trends-stat-num" id="stat-races">${races.length}</div>
+        <div class="trends-stat-label">Races</div>
+      </div>
+      <div class="trends-stat-card">
+        <div class="trends-stat-num" style="color:#d4a017;" id="stat-best">${best}</div>
+        <div class="trends-stat-label">Best Finish</div>
+      </div>
+      <div class="trends-stat-card">
+        <div class="trends-stat-num" id="stat-avg">${avg}</div>
+        <div class="trends-stat-label">Avg Finish</div>
+      </div>
+      <div class="trends-stat-card">
+        <div class="trends-stat-num" id="stat-worst">${worst}</div>
+        <div class="trends-stat-label">Worst Finish</div>
+      </div>
+      <div class="trends-stat-card">
+        <div class="trends-stat-num" style="color:#059669;" id="stat-pct">${avgPct}${avgPct !== '-' ? '%' : ''}</div>
+        <div class="trends-stat-label">Avg Fleet %</div>
+      </div>
+      <div class="trends-stat-card">
+        <div class="trends-stat-num" style="color:#7c3aed;">${practices.length}</div>
+        <div class="trends-stat-label">Practices</div>
+      </div>
+    </div>
+
+    <!-- Position Trend Chart -->
+    <div class="form-card wide" style="margin-bottom:20px;padding:20px;">
+      <h3 style="color:#0b3d6e;margin:0 0 4px;font-size:1.05rem;">&#127937; Finishing Position Trend</h3>
+      <p style="color:#888;font-size:0.8rem;margin:0 0 12px;">Lower is better &bull; Gray bars show fleet size</p>
+      <div style="position:relative;height:280px;"><canvas id="positionChart"></canvas></div>
+    </div>
+
+    <!-- Percentage Trend Chart -->
+    <div class="form-card wide" style="margin-bottom:20px;padding:20px;">
+      <h3 style="color:#0b3d6e;margin:0 0 4px;font-size:1.05rem;">&#128202; Fleet Percentage Trend</h3>
+      <p style="color:#888;font-size:0.8rem;margin:0 0 12px;">Position &divide; Fleet Size &bull; Lower % = better relative finish</p>
+      <div style="position:relative;height:260px;"><canvas id="pctChart"></canvas></div>
+    </div>
+
+    <!-- Race vs Practice breakdown -->
+    <div class="form-card wide" style="margin-bottom:20px;padding:20px;">
+      <h3 style="color:#0b3d6e;margin:0 0 4px;font-size:1.05rem;">&#128197; Race vs Practice Breakdown</h3>
+      <p style="color:#888;font-size:0.8rem;margin:0 0 12px;">Monthly activity &bull; ${totalLogs} total sessions</p>
+      <div style="position:relative;height:220px;"><canvas id="breakdownChart"></canvas></div>
+    </div>
+
+    `}
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script>
+  (function() {
+    var allData = ${JSON.stringify(chartData)};
+    var breakdownData = ${JSON.stringify(breakdownData)};
+    if (!allData.length) return;
+
+    var navy = '#0b3d6e';
+    var gold = '#d4a017';
+    var goldLight = 'rgba(212,160,23,0.15)';
+    var green = '#059669';
+    var greenLight = 'rgba(5,150,105,0.15)';
+    var grayBar = 'rgba(203,213,225,0.5)';
+    var purple = '#7c3aed';
+
+    var posCtx = document.getElementById('positionChart');
+    var pctCtx = document.getElementById('pctChart');
+    var brkCtx = document.getElementById('breakdownChart');
+    var posChart, pctChart, brkChart;
+
+    function getFiltered() {
+      var v = document.getElementById('trends-filter').value;
+      if (v === 'all') return allData.slice();
+      var n = parseInt(v);
+      return allData.slice(-n);
+    }
+
+    function updateStats(data) {
+      var positions = data.map(function(d) { return d.position; });
+      var pcts = data.filter(function(d) { return d.pct !== null; }).map(function(d) { return d.pct; });
+      document.getElementById('stat-races').textContent = data.length;
+      document.getElementById('stat-best').textContent = positions.length ? Math.min.apply(null, positions) : '-';
+      document.getElementById('stat-worst').textContent = positions.length ? Math.max.apply(null, positions) : '-';
+      document.getElementById('stat-avg').textContent = positions.length ? (positions.reduce(function(a,b){return a+b;},0)/positions.length).toFixed(1) : '-';
+      var avgP = pcts.length ? (pcts.reduce(function(a,b){return a+b;},0)/pcts.length).toFixed(1) : '-';
+      document.getElementById('stat-pct').textContent = avgP !== '-' ? avgP + '%' : '-';
+    }
+
+    function shortDate(d) { var p = d.split('-'); var m = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; return m[parseInt(p[1])-1] + ' ' + parseInt(p[2]); }
+
+    function buildPositionChart(data) {
+      var labels = data.map(function(d) { return shortDate(d.date); });
+      var positions = data.map(function(d) { return d.position; });
+      var fleets = data.map(function(d) { return d.fleet; });
+      var maxY = Math.max.apply(null, fleets.concat(positions).filter(function(v){return v!==null;})) + 2;
+
+      var cfg = {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: [
+            {
+              type: 'bar',
+              label: 'Fleet Size',
+              data: fleets,
+              backgroundColor: grayBar,
+              borderColor: 'rgba(203,213,225,0.8)',
+              borderWidth: 1,
+              borderRadius: 4,
+              order: 2
+            },
+            {
+              type: 'line',
+              label: 'Finish Position',
+              data: positions,
+              borderColor: gold,
+              backgroundColor: goldLight,
+              fill: true,
+              tension: 0.3,
+              pointBackgroundColor: gold,
+              pointBorderColor: '#fff',
+              pointBorderWidth: 2,
+              pointRadius: 5,
+              pointHoverRadius: 7,
+              order: 1
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: { position: 'top', labels: { usePointStyle: true, padding: 14, font: { size: 12 } } },
+            tooltip: {
+              callbacks: {
+                title: function(items) { return data[items[0].dataIndex].name + ' (' + data[items[0].dataIndex].date + ')'; },
+                afterBody: function(items) { var d2 = data[items[0].dataIndex]; return d2.location ? d2.location : ''; }
+              }
+            }
+          },
+          scales: {
+            y: {
+              reverse: true,
+              min: 1,
+              max: maxY,
+              title: { display: true, text: 'Position (lower = better)', color: navy, font: { size: 12, weight: 'bold' } },
+              ticks: { stepSize: 1, color: '#666' },
+              grid: { color: 'rgba(0,0,0,0.05)' }
+            },
+            x: {
+              ticks: { color: '#666', font: { size: 11 }, maxRotation: 45 },
+              grid: { display: false }
+            }
+          }
+        }
+      };
+      if (posChart) posChart.destroy();
+      posChart = new Chart(posCtx, cfg);
+    }
+
+    function buildPctChart(data) {
+      var filtered = data.filter(function(d) { return d.pct !== null; });
+      if (!filtered.length) { pctCtx.parentElement.innerHTML = '<p style="text-align:center;color:#888;padding:40px;">Add fleet size to your race logs to see fleet percentage trends.</p>'; return; }
+      var labels = filtered.map(function(d) { return shortDate(d.date); });
+      var pcts = filtered.map(function(d) { return d.pct; });
+
+      // Running average
+      var running = [];
+      var sum = 0;
+      for (var i = 0; i < pcts.length; i++) { sum += pcts[i]; running.push(parseFloat((sum / (i + 1)).toFixed(1))); }
+
+      var cfg = {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [
+            {
+              label: 'Fleet %',
+              data: pcts,
+              borderColor: green,
+              backgroundColor: greenLight,
+              fill: true,
+              tension: 0.3,
+              pointBackgroundColor: green,
+              pointBorderColor: '#fff',
+              pointBorderWidth: 2,
+              pointRadius: 5,
+              pointHoverRadius: 7
+            },
+            {
+              label: 'Running Avg',
+              data: running,
+              borderColor: navy,
+              borderDash: [6, 3],
+              borderWidth: 2,
+              pointRadius: 0,
+              fill: false,
+              tension: 0.4
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: { position: 'top', labels: { usePointStyle: true, padding: 14, font: { size: 12 } } },
+            tooltip: {
+              callbacks: {
+                title: function(items) { var idx = items[0].dataIndex; return filtered[idx].name + ' (' + filtered[idx].date + ')'; },
+                label: function(item) { return item.dataset.label + ': ' + item.raw + '%'; }
+              }
+            }
+          },
+          scales: {
+            y: {
+              min: 0,
+              max: 100,
+              title: { display: true, text: 'Fleet % (lower = better)', color: navy, font: { size: 12, weight: 'bold' } },
+              ticks: { callback: function(v) { return v + '%'; }, color: '#666' },
+              grid: { color: 'rgba(0,0,0,0.05)' }
+            },
+            x: {
+              ticks: { color: '#666', font: { size: 11 }, maxRotation: 45 },
+              grid: { display: false }
+            }
+          }
+        }
+      };
+      if (pctChart) pctChart.destroy();
+      pctChart = new Chart(pctCtx, cfg);
+    }
+
+    // Breakdown chart (always shows all data)
+    function buildBreakdownChart() {
+      if (!breakdownData.labels.length) return;
+      var cfg = {
+        type: 'bar',
+        data: {
+          labels: breakdownData.labels,
+          datasets: [
+            { label: 'Races', data: breakdownData.races, backgroundColor: gold, borderRadius: 4 },
+            { label: 'Practice', data: breakdownData.practices, backgroundColor: purple, borderRadius: 4 }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'top', labels: { usePointStyle: true, padding: 14, font: { size: 12 } } }
+          },
+          scales: {
+            y: { beginAtZero: true, ticks: { stepSize: 1, color: '#666' }, grid: { color: 'rgba(0,0,0,0.05)' }, title: { display: true, text: 'Sessions', color: navy, font: { size: 12, weight: 'bold' } } },
+            x: { stacked: true, ticks: { color: '#666', font: { size: 11 } }, grid: { display: false } }
+          }
+        }
+      };
+      if (brkChart) brkChart.destroy();
+      brkChart = new Chart(brkCtx, cfg);
+    }
+
+    window.applyFilter = function() {
+      var data = getFiltered();
+      updateStats(data);
+      buildPositionChart(data);
+      buildPctChart(data);
+    };
+
+    // Initial render
+    applyFilter();
+    buildBreakdownChart();
+  })();
+  </script>
+
+  <style>
+    .trends-stat-card {
+      background: white;
+      border-radius: 12px;
+      padding: 16px 12px;
+      text-align: center;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+    }
+    .trends-stat-num {
+      font-size: 1.6rem;
+      font-weight: 800;
+      color: #0b3d6e;
+      line-height: 1.2;
+    }
+    .trends-stat-label {
+      font-size: 0.78rem;
+      color: #888;
+      font-weight: 600;
+      margin-top: 2px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    @media (max-width: 600px) {
+      .trends-stat-num { font-size: 1.3rem; }
+      .trends-stat-label { font-size: 0.72rem; }
+      .trends-stat-card { padding: 12px 8px; }
+    }
+  </style>`;
 }
 
 // --- Shared page templates (Share with Crew) ---
