@@ -5782,7 +5782,7 @@ app.post("/coaching/generate", requireAuth, async (req, res) => {
 
   // Gather ALL data sources
   const allLogs = db.prepare("SELECT * FROM race_logs WHERE user_id = ? ORDER BY race_date DESC").all(userId);
-  const vakarosUploads = db.prepare("SELECT * FROM vakaros_uploads WHERE user_id = ? ORDER BY created_at DESC LIMIT 5").all(userId);
+  const vakarosUploads = db.prepare("SELECT * FROM vakaros_uploads WHERE user_id = ? ORDER BY created_at ASC").all(userId);
   const user = db.prepare("SELECT * FROM users WHERE id = ?").get(userId);
 
   if (allLogs.length === 0) return res.status(400).json({ error: "Log at least one race or practice session first to get coaching." });
@@ -5819,12 +5819,36 @@ app.post("/coaching/generate", requireAuth, async (req, res) => {
     ? results.map(r => `${r.race_name} ${r.race_date}: ${r.finish_position}/${r.fleet_size}`).join(', ')
     : 'No race results with positions logged yet';
 
-  // Vakaros data summary
+  // Vakaros data summary — ALL sessions with trend analysis
   let vakarosContext = '';
   if (vakarosUploads.length > 0) {
-    vakarosContext = '\n\n--- VAKAROS TELEMETRY DATA ---\n' + vakarosUploads.map(v =>
-      `Session: ${v.filename} (${v.created_at})\nDuration: ${v.duration_minutes}m | Distance: ${v.distance_nm}nm | Avg Speed: ${v.avg_speed}kts | Max: ${v.max_speed}kts | Avg Heel: ${v.avg_heel}° | Avg VMG: ${v.avg_vmg}kts | Tacks: ${v.tack_count} | Gybes: ${v.gybe_count}\nSampled data:\n${v.csv_summary || '(no raw data)'}`
-    ).join('\n\n');
+    // Compute trends across all sessions (ordered chronologically)
+    const speeds = vakarosUploads.map(v => v.avg_speed).filter(v => v > 0);
+    const vmgs = vakarosUploads.map(v => v.avg_vmg).filter(v => v > 0);
+    const heels = vakarosUploads.map(v => v.avg_heel).filter(v => v > 0);
+    const tacks = vakarosUploads.map(v => v.tack_count).filter(v => v >= 0);
+    const avg = arr => arr.length ? (arr.reduce((a,b) => a+b, 0) / arr.length).toFixed(2) : 'N/A';
+    const firstHalf = arr => arr.slice(0, Math.ceil(arr.length / 2));
+    const secondHalf = arr => arr.slice(Math.ceil(arr.length / 2));
+
+    let trendSummary = `\nTREND ANALYSIS ACROSS ${vakarosUploads.length} SESSIONS (oldest to newest):\n`;
+    trendSummary += `- Avg Speed trend: first half avg ${avg(firstHalf(speeds))} kts → second half avg ${avg(secondHalf(speeds))} kts\n`;
+    trendSummary += `- Avg VMG trend: first half avg ${avg(firstHalf(vmgs))} kts → second half avg ${avg(secondHalf(vmgs))} kts\n`;
+    trendSummary += `- Avg Heel trend: first half avg ${avg(firstHalf(heels))}° → second half avg ${avg(secondHalf(heels))}°\n`;
+    trendSummary += `- Tack count trend: first half avg ${avg(firstHalf(tacks))} → second half avg ${avg(secondHalf(tacks))}\n`;
+    trendSummary += `- Overall avg speed: ${avg(speeds)} kts, Overall avg VMG: ${avg(vmgs)} kts, Overall avg heel: ${avg(heels)}°\n`;
+
+    // Include all session summaries (skip raw csv_summary for older sessions to save tokens)
+    const sessionDetails = vakarosUploads.map((v, i) => {
+      const base = `Session ${i+1}: ${v.filename} (${v.created_at})\n  Duration: ${v.duration_minutes}m | Distance: ${v.distance_nm}nm | Avg Speed: ${v.avg_speed}kts | Max: ${v.max_speed}kts | Avg Heel: ${v.avg_heel}° | Avg VMG: ${v.avg_vmg}kts | Tacks: ${v.tack_count} | Gybes: ${v.gybe_count}`;
+      // Include raw data only for the 3 most recent sessions
+      if (i >= vakarosUploads.length - 3 && v.csv_summary) {
+        return base + '\n  Sampled data:\n' + v.csv_summary;
+      }
+      return base;
+    }).join('\n\n');
+
+    vakarosContext = `\n\n--- VAKAROS TELEMETRY DATA (${vakarosUploads.length} TOTAL SESSIONS) ---\n${trendSummary}\nINDIVIDUAL SESSIONS:\n${sessionDetails}`;
   }
 
   try {
@@ -5855,6 +5879,12 @@ YOUR COACHING STYLE:
 - When suggesting drills, be specific about what to practice and how to measure improvement
 - Reference "Crew College" modules when relevant (e.g., "Review the Upwind Tuning module in Crew College for detailed guidance on this")
 - If Vakaros telemetry is available, add a dedicated Telemetry Insights section
+- When MULTIPLE Vakaros sessions are available, analyze TRENDS across all sessions:
+  * Are speed/VMG improving, declining, or plateauing over time?
+  * Is heel angle becoming more consistent (a sign of better boat handling)?
+  * Are tack counts decreasing (could mean better lane management or fewer tactical errors)?
+  * Call out specific improvements with numbers, e.g. "Your avg VMG improved from 3.1 to 3.4 kts over your last 8 sessions"
+  * Identify sessions that were outliers (unusually good or bad) and hypothesize why
 
 FORMAT YOUR REPORT WITH THESE EXACT SECTIONS:
 ## Overall Performance Summary
@@ -5878,7 +5908,7 @@ FORMAT YOUR REPORT WITH THESE EXACT SECTIONS:
 ## Relevant Crew College Sections to Review
 (Point them to specific learning resources)
 
-${vakarosUploads.length > 0 ? '## Telemetry Insights\n(Analysis of Vakaros sensor data patterns)' : ''}`,
+${vakarosUploads.length > 0 ? '## Telemetry Insights\n(Trends across ALL ' + vakarosUploads.length + ' Vakaros sessions — speed, VMG, heel, tack efficiency over time)' : ''}`,
       messages: [{
         role: "user",
         content: `Generate a comprehensive coaching report for this Snipe sailor.
@@ -6772,15 +6802,19 @@ function coachingPage(raceLogs, uploads, pastReports, highlightUploadId, error, 
       </div>
 
       ${uploads.length > 0 ? `
-      <h4 style="color:#0b3d6e;margin-bottom:10px;">Uploaded Sessions</h4>
-      ${uploads.map(u => `
+      <h4 style="color:#0b3d6e;margin-bottom:10px;">Your Vakaros Sessions (${uploads.length})</h4>
+      <p style="color:#666;font-size:0.82rem;margin-bottom:10px;">All sessions are included in your coaching analysis.</p>
+      ${uploads.map((u, idx) => `
         <div class="vak-history-card">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;">
             <div>
-              <h4 style="font-size:0.95rem;">${escapeHtml(u.filename || 'Vakaros Data')}${u.race_name ? ' &mdash; ' + escapeHtml(u.race_name) : ''}</h4>
-              <div class="vak-history-meta">${u.avg_speed} kts avg &bull; ${u.max_speed} kts max &bull; ${u.avg_heel}&deg; heel &bull; ${u.tack_count} tacks &bull; ${u.distance_nm} nm &bull; ${u.duration_minutes}m</div>
+              <h4 style="font-size:0.95rem;">
+                <span style="color:#0b3d6e;font-size:0.8rem;">#${uploads.length - idx}</span>
+                ${escapeHtml(u.created_at.slice(0,10))} &mdash; ${escapeHtml(u.filename || 'Vakaros Data')}${u.race_name ? ' (' + escapeHtml(u.race_name) + ')' : ''}
+              </h4>
+              <div class="vak-history-meta">${u.duration_minutes}m &bull; ${u.avg_speed} kts avg &bull; ${u.max_speed} kts max &bull; ${u.avg_heel}&deg; heel &bull; VMG ${u.avg_vmg} kts &bull; ${u.tack_count} tacks &bull; ${u.gybe_count} gybes &bull; ${u.distance_nm} nm</div>
             </div>
-            <form method="POST" action="/vakaros/delete/${u.id}" style="display:inline;" onsubmit="return confirm('Delete this upload?')">
+            <form method="POST" action="/vakaros/delete/${u.id}" style="display:inline;" onsubmit="return confirm('Delete this session? It will be removed from future coaching analysis.')">
               <button type="submit" class="btn btn-danger">Delete</button>
             </form>
           </div>
