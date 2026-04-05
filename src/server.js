@@ -5995,6 +5995,28 @@ app.post("/coaching/generate", requireAuth, async (req, res) => {
     vakarosContext = `\n\n--- VAKAROS TELEMETRY DATA (${vakarosUploads.length} TOTAL SESSIONS) ---\n${trendSummary}\nINDIVIDUAL SESSIONS:\n${sessionDetails}`;
   }
 
+  // Data completeness stats for "Improve Your Coaching" section
+  const logsWithWind = allLogs.filter(r => r.wind_speed).length;
+  const logsWithSettings = allLogs.filter(r => r.mast_rake || r.shroud_tension || r.jib_lead).length;
+  const logsWithNotes = allLogs.filter(r => r.notes && r.notes.length > 20).length;
+  const logsWithRating = allLogs.filter(r => r.performance_rating).length;
+  const logsWithSails = allLogs.filter(r => r.main_maker || r.jib_maker || r.mainsail_used || r.jib_used).length;
+  const logsWithCrewWeight = allLogs.filter(r => r.skipper_weight && r.crew_weight).length;
+  const dataCompleteness = `
+--- DATA COMPLETENESS (for "Improve Your Coaching" section) ---
+Total race/practice logs: ${allLogs.length}
+Races with finish positions: ${results.length}
+Races with fleet size: ${allLogs.filter(r => r.fleet_size).length}
+Logs with wind conditions: ${logsWithWind} of ${allLogs.length}
+Logs with boat settings (mast rake, shroud tension, or jib lead): ${logsWithSettings} of ${allLogs.length}
+Logs with sail info (maker/model): ${logsWithSails} of ${allLogs.length}
+Logs with detailed notes (>20 chars): ${logsWithNotes} of ${allLogs.length}
+Logs with self-performance rating: ${logsWithRating} of ${allLogs.length}
+Logs with crew weights: ${logsWithCrewWeight} of ${allLogs.length}
+Practice sessions with notes: ${practices.length}
+Vakaros telemetry sessions: ${vakarosUploads.length}
+`;
+
   try {
     const client = new Anthropic({ apiKey });
     const msg = await client.messages.create({
@@ -6052,7 +6074,27 @@ FORMAT YOUR REPORT WITH THESE EXACT SECTIONS:
 ## Relevant Crew College Sections to Review
 (Point them to specific learning resources)
 
-${vakarosUploads.length > 0 ? '## Telemetry Insights\n(Trends across ALL ' + vakarosUploads.length + ' Vakaros sessions — speed, VMG, heel, tack efficiency over time)' : ''}`,
+${vakarosUploads.length > 0 ? '## Telemetry Insights\n(Trends across ALL ' + vakarosUploads.length + ' Vakaros sessions — speed, VMG, heel, tack efficiency over time)\n\n' : ''}## 📊 Improve Your Coaching
+This section MUST always appear as the FINAL section of the report. Use the DATA COMPLETENESS stats provided to generate:
+
+1. **Data Quality Rating**: Rate the coaching quality from 1-5 stars based on available data. Use ⭐ emoji. Guidelines:
+   - ⭐ (1): Fewer than 3 logs, almost no details
+   - ⭐⭐ (2): 3-5 logs but missing most settings/conditions
+   - ⭐⭐⭐ (3): 6-10 logs with some settings and conditions filled in
+   - ⭐⭐⭐⭐ (4): 10+ logs with good detail, OR any logs + Vakaros data
+   - ⭐⭐⭐⭐⭐ (5): 15+ logs with settings, notes, ratings, AND Vakaros telemetry
+
+2. **What You're Providing**: Acknowledge specifically what data they ARE logging well (be encouraging). Then identify the biggest gaps — what's missing that would most improve the coaching.
+
+3. **Log This Next Time**: Give 2-3 specific, actionable suggestions for what to add to their next race log. Name the exact fields (e.g., "mast rake", "jib lead position", "performance rating"). Focus on what would unlock the most insight.
+
+4. **Your Progress Milestones**: Tell them where they stand relative to milestones:
+   - 5 races: basic pattern recognition unlocked
+   - 10 races: finishing position trends become meaningful
+   - 15 races: deep tuning correlations available
+   - 5 Vakaros sessions: telemetry coaching unlocked
+   - 10 Vakaros sessions: session-over-session trend analysis
+   Use their actual counts and tell them how close they are to the next milestone.`,
       messages: [{
         role: "user",
         content: `Generate a comprehensive coaching report for this Snipe sailor.
@@ -6072,7 +6114,9 @@ ${raceHistory}
 ${practiceNotes ? 'PRACTICE SESSION NOTES:\n' + practiceNotes : '(No practice sessions with notes logged)'}
 ${vakarosContext}
 
-Analyze ALL of this data to provide a detailed, personalized coaching report. Look for patterns across races — what conditions they do well in, what settings they use, where results drop off, and what the notes reveal about their sailing.`
+${dataCompleteness}
+
+Analyze ALL of this data to provide a detailed, personalized coaching report. Look for patterns across races — what conditions they do well in, what settings they use, where results drop off, and what the notes reveal about their sailing. Be sure to include the "📊 Improve Your Coaching" section at the very end using the DATA COMPLETENESS stats above.`
       }]
     });
 
