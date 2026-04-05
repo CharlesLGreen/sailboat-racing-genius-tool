@@ -5744,6 +5744,27 @@ app.post("/vakaros/upload", requireAuth, upload.single("vakaros_csv"), (req, res
   }
 });
 
+app.post("/vakaros/share", requireAuth, upload.single("file"), (req, res) => {
+  const lang = getLang(req);
+  if (!req.file) return res.redirect("/vakaros");
+
+  try {
+    const csvText = req.file.buffer.toString("utf-8");
+    const stats = parseVakarosCsv(csvText);
+
+    const result = db.prepare(`
+      INSERT INTO vakaros_uploads (user_id, race_log_id, filename, row_count, duration_minutes, distance_nm, avg_speed, max_speed, avg_heel, avg_vmg, tack_count, gybe_count, csv_summary)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+    `).run(req.session.user.id, null, req.file.originalname || "Shared session", stats.rowCount, stats.durationMinutes, stats.distanceNm, stats.avgSpeed, stats.maxSpeed, stats.avgHeel, stats.avgVmg, stats.tackCount, stats.gybeCount, stats.csvSummary);
+
+    const logs = db.prepare("SELECT id, race_date, race_name, location FROM race_logs WHERE user_id = ? ORDER BY race_date DESC").all(req.session.user.id);
+    const uploads = db.prepare("SELECT vu.*, rl.race_name, rl.race_date, vc.coaching_report, vc.id as coaching_id FROM vakaros_uploads vu LEFT JOIN race_logs rl ON vu.race_log_id = rl.id LEFT JOIN vakaros_coaching vc ON vc.upload_id = vu.id WHERE vu.user_id = ? ORDER BY vu.created_at DESC").all(req.session.user.id);
+    res.send(renderPage(vakarosPage(logs, uploads, result.lastInsertRowid, null, lang, "Session received! Link it to a race and get your coaching report."), req.session.user, lang));
+  } catch (err) {
+    res.redirect("/vakaros");
+  }
+});
+
 app.post("/vakaros/analyze/:uploadId", requireAuth, async (req, res) => {
   const lang = getLang(req);
   const upRow = db.prepare("SELECT * FROM vakaros_uploads WHERE id = ? AND user_id = ?").get(req.params.uploadId, req.session.user.id);
@@ -6338,9 +6359,11 @@ function renderPage(content, user, lang, showHero) {
 
   // PWA Install Prompt
   var deferredPrompt;
+  window.deferredPwaPrompt = null;
   window.addEventListener('beforeinstallprompt', function(e) {
     e.preventDefault();
     deferredPrompt = e;
+    window.deferredPwaPrompt = e;
     document.getElementById('pwa-install-banner').style.display = '';
   });
 
@@ -6538,20 +6561,21 @@ function sailorPage(sailor, logs, lang) {
   </div>`;
 }
 
-function vakarosPage(raceLogs, uploads, highlightUploadId, error, lang) {
+function vakarosPage(raceLogs, uploads, highlightUploadId, error, lang, successMsg) {
   lang = lang || 'en';
   const highlighted = highlightUploadId ? uploads.find(u => u.id === highlightUploadId) : null;
 
   return `<div class="container">
     <h2>📡 Vakaros Coach <span class="sub">Upload sensor data &amp; get AI coaching</span></h2>
+    ${successMsg ? `<div class="alert alert-success" style="font-size:1rem;">${escapeHtml(successMsg)}</div>` : ""}
     ${error ? `<div class="alert alert-error">${escapeHtml(error)}</div>` : ""}
 
     <div class="form-card wide" style="margin-bottom:24px;">
       <h3 style="color:#0b3d6e;margin-bottom:16px;">Upload Vakaros Data</h3>
 
       <div style="background:#f0f7ff;border:1px solid #d0e2f7;border-radius:12px;padding:20px;margin-bottom:20px;">
-        <h4 style="color:#0b3d6e;margin:0 0 12px;font-size:0.95rem;">How to get your data file:</h4>
-        <div style="display:flex;flex-direction:column;gap:10px;">
+        <h4 style="color:#0b3d6e;margin:0 0 12px;font-size:0.95rem;">Fastest way (installed app):</h4>
+        <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px;">
           <div style="display:flex;align-items:flex-start;gap:10px;">
             <span style="background:#0b3d6e;color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.85rem;flex-shrink:0;">1</span>
             <span style="font-size:0.93rem;color:#333;padding-top:3px;">Open the <strong>Vakaros Connect</strong> app on your phone</span>
@@ -6561,18 +6585,15 @@ function vakarosPage(raceLogs, uploads, highlightUploadId, error, lang) {
             <span style="font-size:0.93rem;color:#333;padding-top:3px;">Tap <strong>Sessions</strong> and select the session you want to analyze</span>
           </div>
           <div style="display:flex;align-items:flex-start;gap:10px;">
-            <span style="background:#0b3d6e;color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.85rem;flex-shrink:0;">3</span>
-            <span style="font-size:0.93rem;color:#333;padding-top:3px;">Tap <strong>Export</strong> and choose <strong>CSV format</strong></span>
-          </div>
-          <div style="display:flex;align-items:flex-start;gap:10px;">
-            <span style="background:#0b3d6e;color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.85rem;flex-shrink:0;">4</span>
-            <span style="font-size:0.93rem;color:#333;padding-top:3px;">Email or save the file to your device</span>
-          </div>
-          <div style="display:flex;align-items:flex-start;gap:10px;">
-            <span style="background:#059669;color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.85rem;flex-shrink:0;">5</span>
-            <span style="font-size:0.93rem;color:#333;padding-top:3px;"><strong>Upload it here</strong> using the button below</span>
+            <span style="background:#059669;color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.85rem;flex-shrink:0;">3</span>
+            <span style="font-size:0.93rem;color:#333;padding-top:3px;">Tap <strong>Export</strong> &rarr; <strong>Share</strong> &rarr; and select <strong>Snipeovation</strong> from the share sheet</span>
           </div>
         </div>
+        <p style="color:#059669;font-weight:700;font-size:0.9rem;margin:0 0 4px;">That's it &mdash; your data will appear here automatically!</p>
+        <p style="color:#888;font-size:0.8rem;margin:0;">Requires Snipeovation to be installed on your home screen. <a href="#" onclick="if(window.deferredPwaPrompt){window.deferredPwaPrompt.prompt();}else{alert('Open this site in your mobile browser and tap Add to Home Screen.');}return false;" style="color:#1a6fb5;font-weight:600;">Install now</a></p>
+        <hr style="border:none;border-top:1px solid #d0e2f7;margin:16px 0;">
+        <h4 style="color:#0b3d6e;margin:0 0 10px;font-size:0.9rem;">Or upload manually:</h4>
+        <p style="color:#555;font-size:0.88rem;margin:0;">Export CSV from Vakaros Connect, save to your device, then use the button below.</p>
       </div>
 
       <form method="POST" action="/vakaros/upload" enctype="multipart/form-data" id="vak-upload-form">
