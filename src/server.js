@@ -7,6 +7,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 
 const crypto = require("crypto");
 const path = require("path");
 const fs = require("fs");
+const Anthropic = require("@anthropic-ai/sdk");
 
 // --- INTERNATIONALIZATION ---
 const translations = {
@@ -818,6 +819,33 @@ try { db.exec("ALTER TABLE race_logs ADD COLUMN main_condition TEXT"); } catch(e
 try { db.exec("ALTER TABLE race_logs ADD COLUMN jib_condition TEXT"); } catch(e) {}
 try { db.exec("ALTER TABLE race_logs ADD COLUMN mast_wiggle TEXT"); } catch(e) {}
 try { db.exec("ALTER TABLE race_logs ADD COLUMN water_type TEXT"); } catch(e) {}
+
+// Vakaros data uploads and coaching reports
+db.exec(`CREATE TABLE IF NOT EXISTS vakaros_uploads (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER REFERENCES users(id),
+  race_log_id INTEGER REFERENCES race_logs(id),
+  filename TEXT,
+  row_count INTEGER,
+  duration_minutes REAL,
+  distance_nm REAL,
+  avg_speed REAL,
+  max_speed REAL,
+  avg_heel REAL,
+  avg_vmg REAL,
+  tack_count INTEGER,
+  gybe_count INTEGER,
+  csv_summary TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+)`);
+db.exec(`CREATE TABLE IF NOT EXISTS vakaros_coaching (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER REFERENCES users(id),
+  upload_id INTEGER REFERENCES vakaros_uploads(id),
+  race_log_id INTEGER REFERENCES race_logs(id),
+  coaching_report TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+)`);
 
 // Migrate existing base64 videos from SQLite to filesystem
 try {
@@ -5566,6 +5594,232 @@ app.get("/performance", requireAuth, (req, res) => {
   `, req.session.user, getLang(req)));
 });
 
+// --- VAKAROS COACH ---
+
+function parseVakarosCsv(csvText) {
+  const lines = csvText.trim().split(/\r?\n/);
+  if (lines.length < 2) throw new Error("CSV file is empty or has no data rows");
+  const headerLine = lines[0].toLowerCase();
+  const headers = headerLine.split(",").map(h => h.trim());
+
+  // Map flexible column names
+  const colMap = {};
+  const aliases = {
+    timestamp: ["timestamp","time","datetime","date_time","utc","gps_time"],
+    latitude: ["latitude","lat"],
+    longitude: ["longitude","lon","lng","long"],
+    speed: ["speed","sog","speed_kts","speed_knots","boat_speed","bsp"],
+    heading: ["heading","hdg","cog","course"],
+    heel: ["heel","heel_angle","heel_deg"],
+    trim: ["trim","pitch","trim_angle"],
+    vmg: ["vmg","vmg_kts"]
+  };
+  for (const [key, names] of Object.entries(aliases)) {
+    const idx = headers.findIndex(h => names.includes(h.replace(/[^a-z0-9_]/g, "")));
+    if (idx !== -1) colMap[key] = idx;
+  }
+
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const cols = lines[i].split(",");
+    const row = {};
+    for (const [key, idx] of Object.entries(colMap)) {
+      row[key] = cols[idx] !== undefined ? cols[idx].trim() : "";
+    }
+    rows.push(row);
+  }
+
+  // Compute stats
+  const speeds = rows.map(r => parseFloat(r.speed)).filter(v => !isNaN(v));
+  const heels = rows.map(r => parseFloat(r.heel)).filter(v => !isNaN(v));
+  const vmgs = rows.map(r => parseFloat(r.vmg)).filter(v => !isNaN(v));
+  const headings = rows.map(r => parseFloat(r.heading)).filter(v => !isNaN(v));
+
+  const avg = arr => arr.length ? arr.reduce((a,b) => a+b, 0) / arr.length : 0;
+
+  // Count tacks and gybes from heading changes
+  let tackCount = 0, gybeCount = 0;
+  if (headings.length > 10) {
+    const smoothWindow = 5;
+    const smoothed = [];
+    for (let i = 0; i < headings.length; i++) {
+      const start = Math.max(0, i - smoothWindow);
+      const slice = headings.slice(start, i + 1);
+      smoothed.push(avg(slice));
+    }
+    for (let i = 1; i < smoothed.length; i++) {
+      let delta = smoothed[i] - smoothed[i-1];
+      if (delta > 180) delta -= 360;
+      if (delta < -180) delta += 360;
+      if (Math.abs(delta) > 25 && Math.abs(delta) < 120) {
+        if (speeds[i] !== undefined && speeds[i] < avg(speeds) * 1.1) tackCount++;
+        else gybeCount++;
+      }
+    }
+  }
+
+  // Distance using haversine
+  let distanceNm = 0;
+  const lats = rows.map(r => parseFloat(r.latitude)).filter(v => !isNaN(v));
+  const lons = rows.map(r => parseFloat(r.longitude)).filter(v => !isNaN(v));
+  if (lats.length > 1 && lats.length === lons.length) {
+    for (let i = 1; i < lats.length; i++) {
+      const dLat = (lats[i] - lats[i-1]) * Math.PI / 180;
+      const dLon = (lons[i] - lons[i-1]) * Math.PI / 180;
+      const a = Math.sin(dLat/2)**2 + Math.cos(lats[i-1]*Math.PI/180) * Math.cos(lats[i]*Math.PI/180) * Math.sin(dLon/2)**2;
+      distanceNm += 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)) * 3440.065;
+    }
+  }
+
+  // Duration from timestamps
+  let durationMin = 0;
+  const timestamps = rows.map(r => r.timestamp).filter(Boolean);
+  if (timestamps.length > 1) {
+    const first = new Date(timestamps[0]);
+    const last = new Date(timestamps[timestamps.length - 1]);
+    if (!isNaN(first) && !isNaN(last)) durationMin = (last - first) / 60000;
+  }
+  if (durationMin <= 0 && rows.length > 1) durationMin = rows.length / 60; // fallback: assume 1Hz
+
+  // Build a condensed summary for AI (sample every Nth row to keep under ~200 rows)
+  const sampleInterval = Math.max(1, Math.floor(rows.length / 200));
+  const sampledRows = rows.filter((_, i) => i % sampleInterval === 0);
+  const csvSummaryLines = [Object.keys(colMap).join(",")];
+  for (const r of sampledRows) {
+    csvSummaryLines.push(Object.keys(colMap).map(k => r[k] || "").join(","));
+  }
+
+  return {
+    rowCount: rows.length,
+    durationMinutes: Math.round(durationMin * 10) / 10,
+    distanceNm: Math.round(distanceNm * 100) / 100,
+    avgSpeed: Math.round(avg(speeds) * 100) / 100,
+    maxSpeed: Math.round(Math.max(0, ...speeds) * 100) / 100,
+    avgHeel: Math.round(avg(heels) * 10) / 10,
+    avgVmg: Math.round(avg(vmgs) * 100) / 100,
+    tackCount,
+    gybeCount,
+    csvSummary: csvSummaryLines.join("\n")
+  };
+}
+
+app.get("/vakaros", requireAuth, (req, res) => {
+  const lang = getLang(req);
+  const logs = db.prepare("SELECT id, race_date, race_name, location FROM race_logs WHERE user_id = ? ORDER BY race_date DESC").all(req.session.user.id);
+  const uploads = db.prepare(`
+    SELECT vu.*, rl.race_name, rl.race_date, vc.coaching_report, vc.id as coaching_id
+    FROM vakaros_uploads vu
+    LEFT JOIN race_logs rl ON vu.race_log_id = rl.id
+    LEFT JOIN vakaros_coaching vc ON vc.upload_id = vu.id
+    WHERE vu.user_id = ?
+    ORDER BY vu.created_at DESC
+  `).all(req.session.user.id);
+  res.send(renderPage(vakarosPage(logs, uploads, null, null, lang), req.session.user, lang));
+});
+
+app.post("/vakaros/upload", requireAuth, upload.single("vakaros_csv"), (req, res) => {
+  const lang = getLang(req);
+  const logs = db.prepare("SELECT id, race_date, race_name, location FROM race_logs WHERE user_id = ? ORDER BY race_date DESC").all(req.session.user.id);
+  if (!req.file) {
+    const uploads = db.prepare("SELECT vu.*, rl.race_name, rl.race_date, vc.coaching_report, vc.id as coaching_id FROM vakaros_uploads vu LEFT JOIN race_logs rl ON vu.race_log_id = rl.id LEFT JOIN vakaros_coaching vc ON vc.upload_id = vu.id WHERE vu.user_id = ? ORDER BY vu.created_at DESC").all(req.session.user.id);
+    return res.send(renderPage(vakarosPage(logs, uploads, null, "Please select a CSV file.", lang), req.session.user, lang));
+  }
+
+  try {
+    const csvText = req.file.buffer.toString("utf-8");
+    const stats = parseVakarosCsv(csvText);
+    const raceLogId = req.body.race_log_id || null;
+
+    const result = db.prepare(`
+      INSERT INTO vakaros_uploads (user_id, race_log_id, filename, row_count, duration_minutes, distance_nm, avg_speed, max_speed, avg_heel, avg_vmg, tack_count, gybe_count, csv_summary)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+    `).run(req.session.user.id, raceLogId, req.file.originalname, stats.rowCount, stats.durationMinutes, stats.distanceNm, stats.avgSpeed, stats.maxSpeed, stats.avgHeel, stats.avgVmg, stats.tackCount, stats.gybeCount, stats.csvSummary);
+
+    const uploads = db.prepare("SELECT vu.*, rl.race_name, rl.race_date, vc.coaching_report, vc.id as coaching_id FROM vakaros_uploads vu LEFT JOIN race_logs rl ON vu.race_log_id = rl.id LEFT JOIN vakaros_coaching vc ON vc.upload_id = vu.id WHERE vu.user_id = ? ORDER BY vu.created_at DESC").all(req.session.user.id);
+    res.send(renderPage(vakarosPage(logs, uploads, result.lastInsertRowid, null, lang), req.session.user, lang));
+  } catch (err) {
+    const uploads = db.prepare("SELECT vu.*, rl.race_name, rl.race_date, vc.coaching_report, vc.id as coaching_id FROM vakaros_uploads vu LEFT JOIN race_logs rl ON vu.race_log_id = rl.id LEFT JOIN vakaros_coaching vc ON vc.upload_id = vu.id WHERE vu.user_id = ? ORDER BY vu.created_at DESC").all(req.session.user.id);
+    res.send(renderPage(vakarosPage(logs, uploads, null, "Error parsing CSV: " + err.message, lang), req.session.user, lang));
+  }
+});
+
+app.post("/vakaros/analyze/:uploadId", requireAuth, async (req, res) => {
+  const lang = getLang(req);
+  const upRow = db.prepare("SELECT * FROM vakaros_uploads WHERE id = ? AND user_id = ?").get(req.params.uploadId, req.session.user.id);
+  if (!upRow) return res.status(404).json({ error: "Upload not found" });
+
+  // Get linked race log if any
+  let raceContext = "";
+  if (upRow.race_log_id) {
+    const race = db.prepare("SELECT * FROM race_logs WHERE id = ?").get(upRow.race_log_id);
+    if (race) {
+      raceContext = `\n\nLinked Race Result:\n- Event: ${race.race_name} (${race.race_date})\n- Location: ${race.location || "N/A"}\n- Finish: ${race.finish_position || "N/A"} of ${race.fleet_size || "N/A"}\n- Wind: ${race.wind_speed || "N/A"} ${race.wind_direction || ""}\n- Sea State: ${race.sea_state || "N/A"}\n- Sails: Main ${race.main_maker || ""} ${race.mainsail_used || ""}, Jib ${race.jib_maker || ""} ${race.jib_used || ""}\n- Mast Rake: ${race.mast_rake || "N/A"}, Shroud Tension: ${race.shroud_tension || "N/A"}\n- Notes: ${race.notes || "None"}`;
+    }
+  }
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: "ANTHROPIC_API_KEY not configured. Set it in Railway environment variables." });
+
+  try {
+    const client = new Anthropic({ apiKey });
+    const msg = await client.messages.create({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 2000,
+      system: `You are an expert Snipe class sailing coach with 30+ years of experience coaching Olympic-level Snipe sailors. You have deep knowledge of Snipe boat tuning, rig setup, sail trim, and race tactics. You analyze Vakaros sensor data to give specific, actionable coaching advice.
+
+Your analysis style:
+- Be direct and specific, not generic
+- Reference actual numbers from the data
+- Compare to Snipe class benchmarks where relevant (e.g., target upwind VMG in 10-12kts is typically 3.2-3.6 kts for competitive Snipe sailors)
+- Give 2-3 specific drills or focus areas for the next practice session
+- If race result data is available, connect the sensor data patterns to the result
+
+Format your report with these sections:
+## Session Overview
+## Upwind Performance
+## Downwind Performance
+## Boat Handling
+## Key Recommendations for Next Session`,
+      messages: [{
+        role: "user",
+        content: `Analyze this Vakaros sailing data from a Snipe class sailboat session:
+
+Session Stats:
+- Duration: ${upRow.duration_minutes} minutes
+- Distance: ${upRow.distance_nm} nm
+- Avg Speed: ${upRow.avg_speed} kts, Max Speed: ${upRow.max_speed} kts
+- Avg Heel: ${upRow.avg_heel}°
+- Avg VMG: ${upRow.avg_vmg} kts
+- Tacks: ${upRow.tack_count}, Gybes: ${upRow.gybe_count}
+${raceContext}
+
+Sampled GPS/Sensor Data (${upRow.row_count} total data points, sampled):
+${upRow.csv_summary}
+
+Provide a detailed coaching report with specific improvements for this Snipe sailor.`
+      }]
+    });
+
+    const report = msg.content[0].text;
+
+    // Save coaching report
+    db.prepare("INSERT INTO vakaros_coaching (user_id, upload_id, race_log_id, coaching_report) VALUES (?,?,?,?)")
+      .run(req.session.user.id, upRow.id, upRow.race_log_id, report);
+
+    res.json({ report });
+  } catch (err) {
+    console.error("Anthropic API error:", err.message);
+    res.status(500).json({ error: "AI analysis failed: " + err.message });
+  }
+});
+
+app.post("/vakaros/delete/:uploadId", requireAuth, (req, res) => {
+  db.prepare("DELETE FROM vakaros_coaching WHERE upload_id = ? AND user_id = ?").run(req.params.uploadId, req.session.user.id);
+  db.prepare("DELETE FROM vakaros_uploads WHERE id = ? AND user_id = ?").run(req.params.uploadId, req.session.user.id);
+  res.redirect("/vakaros");
+});
+
 // --- HTML TEMPLATES ---
 
 function renderPage(content, user, lang, showHero) {
@@ -5959,6 +6213,59 @@ function renderPage(content, user, lang, showHero) {
       background: linear-gradient(135deg,#f59e0b,#d97706); color: #fff;
       border-radius: 6px; font-weight: 700;
     }
+    /* Vakaros Coach */
+    .vak-stats-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 12px; margin: 20px 0;
+    }
+    .vak-stat {
+      background: #f0f7ff; border-radius: 10px; padding: 16px; text-align: center;
+      border: 1px solid #d0e2f7;
+    }
+    .vak-stat .vak-num { font-size: 1.6rem; font-weight: 800; color: #0b3d6e; }
+    .vak-stat .vak-label { font-size: 0.75rem; color: #666; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+    .vak-upload-zone {
+      border: 3px dashed #cbd5e0; border-radius: 16px; padding: 40px 24px;
+      text-align: center; background: #f8fafc; cursor: pointer;
+      transition: all 0.2s;
+    }
+    .vak-upload-zone:hover, .vak-upload-zone.dragover {
+      border-color: #0b3d6e; background: #eef4fb;
+    }
+    .vak-upload-zone .vak-upload-icon { font-size: 2.5rem; margin-bottom: 8px; }
+    .vak-upload-zone p { color: #666; font-size: 0.95rem; }
+    .vak-coaching-report {
+      background: #f0fdf4; border: 2px solid #86efac; border-radius: 12px;
+      padding: 24px; margin-top: 20px; line-height: 1.7; white-space: pre-wrap;
+      font-size: 0.95rem; color: #1a2a3a;
+    }
+    .vak-coaching-report h3, .vak-coaching-report h4 { color: #0b3d6e; margin: 16px 0 8px; }
+    .vak-coaching-report h3:first-child { margin-top: 0; }
+    .btn-coaching {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 12px 24px; border-radius: 10px; font-weight: 700;
+      font-size: 1rem; border: none; cursor: pointer; transition: all 0.15s;
+    }
+    .btn-coaching:active { transform: scale(0.97); }
+    .btn-analyze {
+      background: linear-gradient(135deg, #059669, #10b981); color: #fff;
+      box-shadow: 0 3px 10px rgba(5,150,105,0.3);
+    }
+    .btn-read-aloud {
+      background: #e6f0fa; color: #0b3d6e; border: 2px solid #0b3d6e;
+    }
+    .btn-read-aloud.speaking { background: #fde8e8; color: #c53030; border-color: #c53030; }
+    .vak-spinner {
+      display: inline-block; width: 20px; height: 20px; border: 3px solid rgba(255,255,255,0.3);
+      border-top-color: #fff; border-radius: 50%; animation: vak-spin 0.8s linear infinite;
+    }
+    @keyframes vak-spin { to { transform: rotate(360deg); } }
+    .vak-history-card {
+      background: white; border-radius: 10px; padding: 16px; margin-bottom: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.04); border: 1px solid #e2e8f0;
+    }
+    .vak-history-card h4 { color: #0b3d6e; margin: 0 0 8px; font-size: 1rem; }
+    .vak-history-meta { font-size: 0.85rem; color: #666; margin-bottom: 8px; }
   </style>
 </head>
 <body>
@@ -5985,6 +6292,7 @@ function renderPage(content, user, lang, showHero) {
       <a href="/quick-log" class="btn-quick-entry">&#9889; Quick</a>
       <a href="/log" class="btn-accent">${L('logRace')}</a>
       <a href="/performance">${L('perfMetrics')}</a>
+      <a href="/vakaros" style="color:#a3f0d0;">📡 Vakaros Coach</a>
       <a href="/magic">${L('magic')}</a>
       <a href="/tuning-guides">${L('tuningGuides')}</a>
       <a href="/racing-rules">${L('racingRules')}</a>
@@ -6228,6 +6536,189 @@ function sailorPage(sailor, logs, lang) {
       </div>
     `).join("")}
   </div>`;
+}
+
+function vakarosPage(raceLogs, uploads, highlightUploadId, error, lang) {
+  lang = lang || 'en';
+  const highlighted = highlightUploadId ? uploads.find(u => u.id === highlightUploadId) : null;
+
+  return `<div class="container">
+    <h2>📡 Vakaros Coach <span class="sub">Upload sensor data &amp; get AI coaching</span></h2>
+    ${error ? `<div class="alert alert-error">${escapeHtml(error)}</div>` : ""}
+
+    <div class="form-card wide" style="margin-bottom:24px;">
+      <h3 style="color:#0b3d6e;margin-bottom:16px;">Upload Vakaros Data</h3>
+      <form method="POST" action="/vakaros/upload" enctype="multipart/form-data" id="vak-upload-form">
+        <div class="vak-upload-zone" id="vak-dropzone" onclick="document.getElementById('vak-file-input').click()">
+          <div class="vak-upload-icon">📁</div>
+          <p><strong>Tap to select</strong> or drag &amp; drop your Vakaros CSV export</p>
+          <p style="font-size:0.8rem;color:#999;margin-top:8px;" id="vak-file-name">No file selected</p>
+          <input type="file" name="vakaros_csv" id="vak-file-input" accept=".csv,.txt" style="display:none">
+        </div>
+        <div style="margin-top:16px;">
+          <label style="font-weight:600;color:#333;font-size:0.9rem;display:block;margin-bottom:6px;">Link to Race Log (optional)</label>
+          <select name="race_log_id" style="width:100%;padding:10px 12px;border:2px solid #e2e8f0;border-radius:8px;font-size:0.95rem;">
+            <option value="">-- No linked race --</option>
+            ${raceLogs.map(r => `<option value="${r.id}">${escapeHtml(r.race_date)} &mdash; ${escapeHtml(r.race_name)}${r.location ? " (" + escapeHtml(r.location) + ")" : ""}</option>`).join("")}
+          </select>
+        </div>
+        <div style="margin-top:16px;text-align:center;">
+          <button type="submit" class="btn btn-primary" style="padding:12px 32px;font-size:1rem;" id="vak-upload-btn">Upload &amp; Analyze</button>
+        </div>
+      </form>
+    </div>
+
+    ${highlighted ? `
+    <div class="form-card wide" id="latest-upload" style="margin-bottom:24px;border:2px solid #86efac;">
+      <h3 style="color:#059669;margin-bottom:4px;">Session Uploaded: ${escapeHtml(highlighted.filename || 'Vakaros Data')}</h3>
+      <p style="color:#666;font-size:0.85rem;margin-bottom:16px;">${highlighted.row_count} data points &bull; ${highlighted.duration_minutes} min${highlighted.race_name ? ' &bull; Linked to ' + escapeHtml(highlighted.race_name) : ''}</p>
+      <div class="vak-stats-grid">
+        <div class="vak-stat"><div class="vak-num">${highlighted.avg_speed}</div><div class="vak-label">Avg Speed (kts)</div></div>
+        <div class="vak-stat"><div class="vak-num">${highlighted.max_speed}</div><div class="vak-label">Max Speed (kts)</div></div>
+        <div class="vak-stat"><div class="vak-num">${highlighted.avg_heel}&deg;</div><div class="vak-label">Avg Heel</div></div>
+        <div class="vak-stat"><div class="vak-num">${highlighted.avg_vmg}</div><div class="vak-label">Avg VMG (kts)</div></div>
+        <div class="vak-stat"><div class="vak-num">${highlighted.tack_count}</div><div class="vak-label">Tacks</div></div>
+        <div class="vak-stat"><div class="vak-num">${highlighted.gybe_count}</div><div class="vak-label">Gybes</div></div>
+        <div class="vak-stat"><div class="vak-num">${highlighted.distance_nm}</div><div class="vak-label">Distance (nm)</div></div>
+        <div class="vak-stat"><div class="vak-num">${highlighted.duration_minutes}m</div><div class="vak-label">Duration</div></div>
+      </div>
+
+      ${highlighted.coaching_report ? `
+        <div class="vak-coaching-report" id="coaching-report-${highlighted.id}">${highlighted.coaching_report.replace(/## /g, '<h3>').replace(/\n/g, '<br>')}</div>
+        <div style="margin-top:12px;display:flex;gap:12px;flex-wrap:wrap;">
+          <button class="btn-coaching btn-read-aloud" onclick="toggleReadAloud(this, 'coaching-report-${highlighted.id}')">🔊 Read Aloud</button>
+        </div>
+      ` : `
+        <div style="text-align:center;margin-top:16px;">
+          <button class="btn-coaching btn-analyze" id="analyze-btn-${highlighted.id}" onclick="requestCoaching(${highlighted.id})">
+            🤖 Get AI Coaching Report
+          </button>
+          <div id="coaching-result-${highlighted.id}"></div>
+        </div>
+      `}
+    </div>
+    ` : ""}
+
+    ${uploads.length > 0 ? `
+    <h3 style="color:#0b3d6e;margin-bottom:12px;">Upload History</h3>
+    ${uploads.filter(u => u.id !== highlightUploadId).map(u => `
+      <div class="vak-history-card">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;">
+          <div>
+            <h4>${escapeHtml(u.filename || 'Vakaros Data')}${u.race_name ? ' &mdash; ' + escapeHtml(u.race_name) : ''}</h4>
+            <div class="vak-history-meta">
+              ${escapeHtml(u.race_date || u.created_at.slice(0,10))} &bull; ${u.avg_speed} kts avg &bull; ${u.max_speed} kts max &bull; ${u.tack_count} tacks &bull; ${u.distance_nm} nm &bull; ${u.duration_minutes}m
+            </div>
+          </div>
+          <form method="POST" action="/vakaros/delete/${u.id}" style="display:inline;" onsubmit="return confirm('Delete this upload and its coaching report?')">
+            <button type="submit" class="btn btn-danger">Delete</button>
+          </form>
+        </div>
+        ${u.coaching_report ? `
+          <details style="margin-top:8px;">
+            <summary style="cursor:pointer;color:#0b3d6e;font-weight:600;font-size:0.9rem;">View Coaching Report</summary>
+            <div class="vak-coaching-report" id="coaching-report-${u.id}" style="margin-top:8px;">${u.coaching_report.replace(/## /g, '<h3>').replace(/\n/g, '<br>')}</div>
+            <div style="margin-top:8px;display:flex;gap:12px;flex-wrap:wrap;">
+              <button class="btn-coaching btn-read-aloud" onclick="toggleReadAloud(this, 'coaching-report-${u.id}')">🔊 Read Aloud</button>
+            </div>
+          </details>
+        ` : `
+          <div style="margin-top:8px;">
+            <button class="btn-coaching btn-analyze" id="analyze-btn-${u.id}" onclick="requestCoaching(${u.id})" style="font-size:0.85rem;padding:8px 16px;">
+              🤖 Get AI Coaching
+            </button>
+            <div id="coaching-result-${u.id}"></div>
+          </div>
+        `}
+      </div>
+    `).join("")}
+    ` : '<div class="empty-state"><h3>No uploads yet</h3><p>Upload your first Vakaros CSV to get started!</p></div>'}
+  </div>
+
+  <script>
+  // Drag & drop
+  (function() {
+    var zone = document.getElementById('vak-dropzone');
+    var fileInput = document.getElementById('vak-file-input');
+    var fileName = document.getElementById('vak-file-name');
+    if (!zone) return;
+    ['dragenter','dragover'].forEach(function(e) {
+      zone.addEventListener(e, function(ev) { ev.preventDefault(); zone.classList.add('dragover'); });
+    });
+    ['dragleave','drop'].forEach(function(e) {
+      zone.addEventListener(e, function(ev) { ev.preventDefault(); zone.classList.remove('dragover'); });
+    });
+    zone.addEventListener('drop', function(ev) {
+      if (ev.dataTransfer.files.length) {
+        fileInput.files = ev.dataTransfer.files;
+        fileName.textContent = ev.dataTransfer.files[0].name;
+      }
+    });
+    fileInput.addEventListener('change', function() {
+      if (fileInput.files.length) fileName.textContent = fileInput.files[0].name;
+    });
+  })();
+
+  // AI Coaching request
+  function requestCoaching(uploadId) {
+    var btn = document.getElementById('analyze-btn-' + uploadId);
+    var resultDiv = document.getElementById('coaching-result-' + uploadId);
+    if (!btn || !resultDiv) return;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="vak-spinner"></span> Analyzing with Claude AI...';
+    fetch('/vakaros/analyze/' + uploadId, { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.error) {
+          btn.innerHTML = '🤖 Get AI Coaching Report';
+          btn.disabled = false;
+          resultDiv.innerHTML = '<div class="alert alert-error" style="margin-top:12px;">' + data.error + '</div>';
+          return;
+        }
+        btn.style.display = 'none';
+        var reportHtml = data.report.replace(/## /g, '<h3>').replace(/\\n/g, '<br>').replace(/\n/g, '<br>');
+        var reportId = 'coaching-report-new-' + uploadId;
+        resultDiv.innerHTML = '<div class="vak-coaching-report" id="' + reportId + '" style="margin-top:16px;">' + reportHtml + '</div>' +
+          '<div style="margin-top:12px;display:flex;gap:12px;flex-wrap:wrap;">' +
+          '<button class="btn-coaching btn-read-aloud" onclick="toggleReadAloud(this, \\'' + reportId + '\\')">🔊 Read Aloud</button>' +
+          '</div>';
+      })
+      .catch(function(err) {
+        btn.innerHTML = '🤖 Get AI Coaching Report';
+        btn.disabled = false;
+        resultDiv.innerHTML = '<div class="alert alert-error" style="margin-top:12px;">Request failed. Check your connection.</div>';
+      });
+  }
+
+  // Read Aloud with Web Speech API
+  var currentUtterance = null;
+  function toggleReadAloud(btn, reportId) {
+    if (currentUtterance && speechSynthesis.speaking) {
+      speechSynthesis.cancel();
+      currentUtterance = null;
+      btn.innerHTML = '🔊 Read Aloud';
+      btn.classList.remove('speaking');
+      return;
+    }
+    var el = document.getElementById(reportId);
+    if (!el) return;
+    if (!('speechSynthesis' in window)) {
+      alert('Text-to-speech is not supported in this browser.');
+      return;
+    }
+    var text = el.innerText || el.textContent;
+    currentUtterance = new SpeechSynthesisUtterance(text);
+    currentUtterance.rate = 0.95;
+    currentUtterance.onend = function() {
+      btn.innerHTML = '🔊 Read Aloud';
+      btn.classList.remove('speaking');
+      currentUtterance = null;
+    };
+    btn.innerHTML = '⏹ Stop Reading';
+    btn.classList.add('speaking');
+    speechSynthesis.speak(currentUtterance);
+  }
+  </script>`;
 }
 
 function quickLogPage(data, error, lang) {
