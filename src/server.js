@@ -6548,12 +6548,46 @@ function vakarosPage(raceLogs, uploads, highlightUploadId, error, lang) {
 
     <div class="form-card wide" style="margin-bottom:24px;">
       <h3 style="color:#0b3d6e;margin-bottom:16px;">Upload Vakaros Data</h3>
+
+      <div style="background:#f0f7ff;border:1px solid #d0e2f7;border-radius:12px;padding:20px;margin-bottom:20px;">
+        <h4 style="color:#0b3d6e;margin:0 0 12px;font-size:0.95rem;">How to get your data file:</h4>
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <div style="display:flex;align-items:flex-start;gap:10px;">
+            <span style="background:#0b3d6e;color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.85rem;flex-shrink:0;">1</span>
+            <span style="font-size:0.93rem;color:#333;padding-top:3px;">Open the <strong>Vakaros Connect</strong> app on your phone</span>
+          </div>
+          <div style="display:flex;align-items:flex-start;gap:10px;">
+            <span style="background:#0b3d6e;color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.85rem;flex-shrink:0;">2</span>
+            <span style="font-size:0.93rem;color:#333;padding-top:3px;">Tap <strong>Sessions</strong> and select the session you want to analyze</span>
+          </div>
+          <div style="display:flex;align-items:flex-start;gap:10px;">
+            <span style="background:#0b3d6e;color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.85rem;flex-shrink:0;">3</span>
+            <span style="font-size:0.93rem;color:#333;padding-top:3px;">Tap <strong>Export</strong> and choose <strong>CSV format</strong></span>
+          </div>
+          <div style="display:flex;align-items:flex-start;gap:10px;">
+            <span style="background:#0b3d6e;color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.85rem;flex-shrink:0;">4</span>
+            <span style="font-size:0.93rem;color:#333;padding-top:3px;">Email or save the file to your device</span>
+          </div>
+          <div style="display:flex;align-items:flex-start;gap:10px;">
+            <span style="background:#059669;color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.85rem;flex-shrink:0;">5</span>
+            <span style="font-size:0.93rem;color:#333;padding-top:3px;"><strong>Upload it here</strong> using the button below</span>
+          </div>
+        </div>
+      </div>
+
       <form method="POST" action="/vakaros/upload" enctype="multipart/form-data" id="vak-upload-form">
         <div class="vak-upload-zone" id="vak-dropzone" onclick="document.getElementById('vak-file-input').click()">
-          <div class="vak-upload-icon">📁</div>
-          <p><strong>Tap to select</strong> or drag &amp; drop your Vakaros CSV export</p>
-          <p style="font-size:0.8rem;color:#999;margin-top:8px;" id="vak-file-name">No file selected</p>
+          <div style="font-size:2.5rem;margin-bottom:8px;">&#128194;</div>
+          <div style="background:linear-gradient(135deg,#0b3d6e,#1565c0);color:#fff;display:inline-block;padding:14px 32px;border-radius:12px;font-size:1.1rem;font-weight:700;margin-bottom:12px;">&#128194; Choose CSV File</div>
+          <p style="color:#666;font-size:0.9rem;">Tap to choose your Vakaros CSV file</p>
+          <div id="vak-file-status" style="display:none;margin-top:12px;padding:10px 16px;background:#ecfdf5;border:2px solid #86efac;border-radius:10px;">
+            <span style="color:#059669;font-weight:700;font-size:1rem;">&#9989;</span>
+            <span style="color:#059669;font-weight:600;font-size:0.95rem;" id="vak-file-name"></span>
+          </div>
           <input type="file" name="vakaros_csv" id="vak-file-input" accept=".csv,.txt" style="display:none">
+        </div>
+        <div style="text-align:center;margin-top:8px;">
+          <span style="font-size:0.8rem;color:#999;cursor:help;border-bottom:1px dashed #999;" title="CSV is a simple data file that your Vakaros app can export. It contains your speed, heading, heel angle, and GPS data from your sailing session.">What is a CSV file?</span>
         </div>
         <div style="margin-top:16px;">
           <label style="font-weight:600;color:#333;font-size:0.9rem;display:block;margin-bottom:6px;">Link to Race Log (optional)</label>
@@ -6636,12 +6670,19 @@ function vakarosPage(raceLogs, uploads, highlightUploadId, error, lang) {
   </div>
 
   <script>
-  // Drag & drop
+  // File selection
   (function() {
     var zone = document.getElementById('vak-dropzone');
     var fileInput = document.getElementById('vak-file-input');
+    var fileStatus = document.getElementById('vak-file-status');
     var fileName = document.getElementById('vak-file-name');
-    if (!zone) return;
+    if (!zone || !fileInput) return;
+    function showFile(name) {
+      fileName.textContent = name;
+      fileStatus.style.display = 'block';
+      zone.style.borderColor = '#059669';
+      zone.style.background = '#f0fdf4';
+    }
     ['dragenter','dragover'].forEach(function(e) {
       zone.addEventListener(e, function(ev) { ev.preventDefault(); zone.classList.add('dragover'); });
     });
@@ -6651,11 +6692,11 @@ function vakarosPage(raceLogs, uploads, highlightUploadId, error, lang) {
     zone.addEventListener('drop', function(ev) {
       if (ev.dataTransfer.files.length) {
         fileInput.files = ev.dataTransfer.files;
-        fileName.textContent = ev.dataTransfer.files[0].name;
+        showFile(ev.dataTransfer.files[0].name);
       }
     });
     fileInput.addEventListener('change', function() {
-      if (fileInput.files.length) fileName.textContent = fileInput.files[0].name;
+      if (fileInput.files.length) showFile(fileInput.files[0].name);
     });
   })();
 
