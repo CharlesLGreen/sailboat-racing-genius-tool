@@ -5920,6 +5920,32 @@ function renderPage(content, user, lang, showHero) {
       background: linear-gradient(135deg, #059669, #10b981);
       box-shadow: 0 4px 12px rgba(5,150,105,0.3);
     }
+    /* Quick form voice input */
+    .quick-voice-wrap {
+      position: relative;
+    }
+    .quick-voice-wrap input,
+    .quick-voice-wrap textarea {
+      padding-right: 52px;
+    }
+    .quick-mic {
+      position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+      width: 40px; height: 40px; border-radius: 50%;
+      background: #e8f0fe; border: 2px solid #cbd5e0;
+      font-size: 1.3rem; cursor: pointer; display: flex;
+      align-items: center; justify-content: center;
+      transition: all 0.15s; color: #0b3d6e; padding: 0; line-height: 1;
+    }
+    .quick-mic:active { transform: translateY(-50%) scale(0.93); }
+    .quick-mic:hover { background: #d0e2f7; border-color: #0b3d6e; }
+    .quick-mic.qm-listening {
+      background: #e53e3e; border-color: #c53030; color: #fff;
+      animation: qm-pulse 1s infinite;
+    }
+    .quick-voice-wrap textarea ~ .quick-mic {
+      top: 20px; transform: none;
+    }
+    @keyframes qm-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(229,62,62,0.4); } 50% { box-shadow: 0 0 0 8px rgba(229,62,62,0); } }
     /* Dashboard quick-log button */
     .btn-quick-log {
       display: inline-block; padding: 10px 20px; border-radius: 8px;
@@ -6233,7 +6259,10 @@ function quickLogPage(data, error, lang) {
         <div id="section-race" style="${isPractice ? 'display:none' : ''}">
           <div class="quick-race-field">
             <label>Regatta / Event</label>
-            <input type="text" name="race_name" id="race-name-input" value="${escapeHtml(d.race_name || '')}" placeholder="e.g. Midwinters Race 3" autocomplete="off">
+            <div class="quick-voice-wrap">
+              <input type="text" name="race_name" id="race-name-input" value="${escapeHtml(d.race_name || '')}" placeholder="e.g. Midwinters Race 3" autocomplete="off">
+              <button type="button" class="quick-mic" data-target="race-name-input" aria-label="Voice input">&#127908;</button>
+            </div>
           </div>
           <div class="quick-race-field">
             <label>Finish Position</label>
@@ -6248,7 +6277,10 @@ function quickLogPage(data, error, lang) {
         <div id="section-practice" style="${!isPractice ? 'display:none' : ''}">
           <div class="quick-race-field">
             <label>Session Name</label>
-            <input type="text" id="practice-name-input" value="${escapeHtml(isPractice ? (d.race_name || '') : '')}" placeholder="e.g. Tuesday Practice" autocomplete="off">
+            <div class="quick-voice-wrap">
+              <input type="text" id="practice-name-input" value="${escapeHtml(isPractice ? (d.race_name || '') : '')}" placeholder="e.g. Tuesday Practice" autocomplete="off">
+              <button type="button" class="quick-mic" data-target="practice-name-input" aria-label="Voice input">&#127908;</button>
+            </div>
           </div>
           <div class="quick-race-field">
             <label>Session Focus</label>
@@ -6269,7 +6301,10 @@ function quickLogPage(data, error, lang) {
 
         <div class="quick-race-field">
           <label>Notes <span style="font-weight:400;color:#94a3b8;">(optional)</span></label>
-          <textarea name="notes" placeholder="${isPractice ? 'What you worked on, what clicked...' : 'Wind, conditions, key moments...'}" id="notes-field">${escapeHtml(d.notes || '')}</textarea>
+          <div class="quick-voice-wrap">
+            <textarea name="notes" placeholder="${isPractice ? 'What you worked on, what clicked...' : 'Wind, conditions, key moments...'}" id="notes-field">${escapeHtml(d.notes || '')}</textarea>
+            <button type="button" class="quick-mic" data-target="notes-field" aria-label="Voice input">&#127908;</button>
+          </div>
         </div>
         <div class="quick-race-actions">
           <button type="submit" class="btn-quick-save" id="save-btn">Save Race</button>
@@ -6314,6 +6349,52 @@ function quickLogPage(data, error, lang) {
       notesField.placeholder = 'Wind, conditions, key moments...';
     }
   }
+
+  // Voice input
+  (function() {
+    var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    var mics = document.querySelectorAll('.quick-mic');
+    if (!SR) {
+      for (var i = 0; i < mics.length; i++) mics[i].style.display = 'none';
+      return;
+    }
+    var activeRec = null;
+    var activeBtn = null;
+    function stopCurrent() {
+      if (activeRec) { activeRec.abort(); activeRec = null; }
+      if (activeBtn) { activeBtn.innerHTML = '\\u{1F3A4}'; activeBtn.classList.remove('qm-listening'); activeBtn = null; }
+    }
+    for (var i = 0; i < mics.length; i++) {
+      mics[i].addEventListener('click', function() {
+        var btn = this;
+        var targetId = btn.getAttribute('data-target');
+        var field = document.getElementById(targetId);
+        if (!field) return;
+        if (activeBtn === btn) { stopCurrent(); return; }
+        stopCurrent();
+        var rec = new SR();
+        rec.lang = '${lang === "es" ? "es-ES" : lang === "it" ? "it-IT" : lang === "pt" ? "pt-BR" : "en-US"}';
+        rec.interimResults = false;
+        rec.continuous = false;
+        activeRec = rec;
+        activeBtn = btn;
+        btn.innerHTML = '\\u23F9';
+        btn.classList.add('qm-listening');
+        rec.onresult = function(e) {
+          var text = e.results[0][0].transcript;
+          if (field.value && field.tagName === 'TEXTAREA') {
+            field.value += ' ' + text;
+          } else {
+            field.value = text;
+          }
+          field.focus();
+        };
+        rec.onend = function() { stopCurrent(); };
+        rec.onerror = function() { stopCurrent(); };
+        rec.start();
+      });
+    }
+  })();
 
   document.getElementById('quick-form').addEventListener('submit', function(e) {
     var mode = document.getElementById('entry-mode').value;
