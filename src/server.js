@@ -6429,7 +6429,7 @@ function renderPage(content, user, lang, showHero) {
       <a href="/quick-log" class="btn-quick-entry">&#9889; Quick</a>
       <a href="/log" class="btn-accent">${L('logRace')}</a>
       <a href="/performance">${L('perfMetrics')}</a>
-      <a href="/coaching" style="color:#a3f0d0;">&#127919; Coaching</a>
+      <a href="/coaching" style="color:#a3f0d0;">&#127919; Coaching + Vakaros</a>
       <a href="/magic">${L('magic')}</a>
       <a href="/tuning-guides">${L('tuningGuides')}</a>
       <a href="/racing-rules">${L('racingRules')}</a>
