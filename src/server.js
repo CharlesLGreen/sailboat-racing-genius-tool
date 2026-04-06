@@ -1190,6 +1190,8 @@ app.get("/dashboard", requireAuth, (req, res) => {
   res.send(renderPage(dashboardPage(logs, req.session.user, lang, justSaved), req.session.user, lang));
 });
 
+app.get("/log-race", (req, res) => res.redirect("/log"));
+
 app.get("/log", requireAuth, (req, res) => {
   const userCheck = db.prepare("SELECT wire_size_default, data_sharing FROM users WHERE id = ?").get(req.session.user.id);
   const lang = getLang(req);
