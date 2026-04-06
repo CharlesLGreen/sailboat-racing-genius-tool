@@ -6338,6 +6338,9 @@ function renderLiveTrackingPage(eventId, divisions, shortIds, times, apiToken) {
     <span id="status">Disconnected</span>
   </div>
 </header>
+<div style="background:#1a1a2e;border-bottom:1px solid rgba(255,255,255,0.1);padding:6px 20px;font-size:0.75rem;color:#90a4ae;text-align:center;">
+  <strong style="color:#ffb74d;">Class Rules Notice:</strong> Snipe Class Rules prohibit the use of electronic devices for tactical advantage during racing (SCIRA Rule 28). Live tracking is for <strong>coaching, spectator, and post-race analysis purposes only</strong>. Do not use this data to make tactical decisions while racing.
+</div>
 <div style="position:relative;flex:1;display:flex">
   <div id="map"></div>
   <div id="sidebar">
