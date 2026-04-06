@@ -886,6 +886,9 @@ try { db.exec("ALTER TABLE race_logs ADD COLUMN main_condition TEXT"); } catch(e
 try { db.exec("ALTER TABLE race_logs ADD COLUMN jib_condition TEXT"); } catch(e) {}
 try { db.exec("ALTER TABLE race_logs ADD COLUMN mast_wiggle TEXT"); } catch(e) {}
 try { db.exec("ALTER TABLE race_logs ADD COLUMN water_type TEXT"); } catch(e) {}
+try { db.exec("ALTER TABLE vakaros_uploads ADD COLUMN import_source TEXT DEFAULT 'csv'") } catch(e) {}
+try { db.exec("ALTER TABLE vakaros_uploads ADD COLUMN event_id TEXT") } catch(e) {}
+try { db.exec("ALTER TABLE vakaros_uploads ADD COLUMN division TEXT") } catch(e) {}
 
 // Vakaros data uploads and coaching reports
 db.exec(`CREATE TABLE IF NOT EXISTS vakaros_uploads (
@@ -920,6 +923,13 @@ db.exec(`CREATE TABLE IF NOT EXISTS coaching_reports (
   race_count INTEGER,
   has_vakaros INTEGER DEFAULT 0,
   coaching_report TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+)`);
+
+db.exec(`CREATE TABLE IF NOT EXISTS vakaros_api_keys (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER REFERENCES users(id) UNIQUE,
+  api_token TEXT,
   created_at TEXT DEFAULT (datetime('now'))
 )`);
 
@@ -5928,13 +5938,93 @@ app.get("/performance", requireAuth, (req, res) => {
 
 // --- VAKAROS COACH ---
 
+// ---- SHARED TELEMETRY STATS COMPUTATION ----
+// Used by both CSV upload AND API import paths — same stats, same shape.
+
+function computeTelemetryStats(rows, colMap) {
+  // rows: array of objects with keys matching colMap keys
+  // colMap keys used: timestamp, latitude, longitude, speed, heading, heel, vmg
+
+  const get = (row, key) => row[key] !== undefined ? row[key] : '';
+
+  const speeds   = rows.map(r => parseFloat(get(r,'speed'))).filter(v => !isNaN(v) && v > 0);
+  const heels    = rows.map(r => parseFloat(get(r,'heel'))).filter(v => !isNaN(v));
+  const vmgs     = rows.map(r => parseFloat(get(r,'vmg'))).filter(v => !isNaN(v));
+  const headings = rows.map(r => parseFloat(get(r,'heading'))).filter(v => !isNaN(v));
+  const lats     = rows.map(r => parseFloat(get(r,'latitude'))).filter(v => !isNaN(v));
+  const lons     = rows.map(r => parseFloat(get(r,'longitude'))).filter(v => !isNaN(v));
+  const timestamps = rows.map(r => get(r,'timestamp')).filter(Boolean);
+
+  const avg = arr => arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : 0;
+
+  // Tack/gybe counting via smoothed heading changes
+  let tackCount = 0, gybeCount = 0;
+  if (headings.length > 10) {
+    const sw = 5;
+    const smoothed = headings.map((_, i) => {
+      const slice = headings.slice(Math.max(0,i-sw), i+1);
+      return avg(slice);
+    });
+    for (let i = 1; i < smoothed.length; i++) {
+      let d = smoothed[i] - smoothed[i-1];
+      if (d > 180) d -= 360;
+      if (d < -180) d += 360;
+      if (Math.abs(d) > 25 && Math.abs(d) < 120) {
+        if (speeds[i] !== undefined && speeds[i] < avg(speeds)*1.1) tackCount++;
+        else gybeCount++;
+      }
+    }
+  }
+
+  // Distance via haversine
+  let distanceNm = 0;
+  if (lats.length > 1 && lats.length === lons.length) {
+    for (let i = 1; i < lats.length; i++) {
+      const dLat = (lats[i]-lats[i-1])*Math.PI/180;
+      const dLon = (lons[i]-lons[i-1])*Math.PI/180;
+      const a = Math.sin(dLat/2)**2 + Math.cos(lats[i-1]*Math.PI/180)*Math.cos(lats[i]*Math.PI/180)*Math.sin(dLon/2)**2;
+      distanceNm += 2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a))*3440.065;
+    }
+  }
+
+  // Duration from timestamps
+  let durationMin = 0;
+  if (timestamps.length > 1) {
+    const first = new Date(timestamps[0]);
+    const last  = new Date(timestamps[timestamps.length-1]);
+    if (!isNaN(first) && !isNaN(last)) durationMin = (last-first)/60000;
+  }
+  if (durationMin <= 0 && rows.length > 1) durationMin = rows.length/60;
+
+  // Build condensed CSV summary for AI (sample ~200 rows)
+  const sampleInterval = Math.max(1, Math.floor(rows.length/200));
+  const keys = Object.keys(colMap);
+  const csvLines = [keys.join(',')];
+  rows.filter((_,i)=>i%sampleInterval===0).forEach(r => {
+    csvLines.push(keys.map(k => get(r,k)||'').join(','));
+  });
+
+  return {
+    rowCount: rows.length,
+    durationMinutes: Math.round(durationMin*10)/10,
+    distanceNm: Math.round(distanceNm*100)/100,
+    avgSpeed: Math.round(avg(speeds)*100)/100,
+    maxSpeed: Math.round(Math.max(0,...speeds)*100)/100,
+    avgHeel: Math.round(avg(heels)*10)/10,
+    avgVmg: Math.round(avg(vmgs)*100)/100,
+    tackCount,
+    gybeCount,
+    csvSummary: csvLines.join('\n')
+  };
+}
+
+// ---- CSV UPLOAD PATH (unchanged, kept for backwards compatibility) ----
+
 function parseVakarosCsv(csvText) {
   const lines = csvText.trim().split(/\r?\n/);
   if (lines.length < 2) throw new Error("CSV file is empty or has no data rows");
-  const headerLine = lines[0].toLowerCase();
-  const headers = headerLine.split(",").map(h => h.trim());
+  const headers = lines[0].toLowerCase().split(",").map(h => h.trim());
 
-  // Map flexible column names
   const colMap = {};
   const aliases = {
     timestamp: ["timestamp","time","datetime","date_time","utc","gps_time"],
@@ -5947,7 +6037,7 @@ function parseVakarosCsv(csvText) {
     vmg: ["vmg","vmg_kts"]
   };
   for (const [key, names] of Object.entries(aliases)) {
-    const idx = headers.findIndex(h => names.includes(h.replace(/[^a-z0-9_]/g, "")));
+    const idx = headers.findIndex(h => names.includes(h.replace(/[^a-z0-9_]/g,"")));
     if (idx !== -1) colMap[key] = idx;
   }
 
@@ -5962,80 +6052,176 @@ function parseVakarosCsv(csvText) {
     rows.push(row);
   }
 
-  // Compute stats
-  const speeds = rows.map(r => parseFloat(r.speed)).filter(v => !isNaN(v));
-  const heels = rows.map(r => parseFloat(r.heel)).filter(v => !isNaN(v));
-  const vmgs = rows.map(r => parseFloat(r.vmg)).filter(v => !isNaN(v));
-  const headings = rows.map(r => parseFloat(r.heading)).filter(v => !isNaN(v));
-
-  const avg = arr => arr.length ? arr.reduce((a,b) => a+b, 0) / arr.length : 0;
-
-  // Count tacks and gybes from heading changes
-  let tackCount = 0, gybeCount = 0;
-  if (headings.length > 10) {
-    const smoothWindow = 5;
-    const smoothed = [];
-    for (let i = 0; i < headings.length; i++) {
-      const start = Math.max(0, i - smoothWindow);
-      const slice = headings.slice(start, i + 1);
-      smoothed.push(avg(slice));
-    }
-    for (let i = 1; i < smoothed.length; i++) {
-      let delta = smoothed[i] - smoothed[i-1];
-      if (delta > 180) delta -= 360;
-      if (delta < -180) delta += 360;
-      if (Math.abs(delta) > 25 && Math.abs(delta) < 120) {
-        if (speeds[i] !== undefined && speeds[i] < avg(speeds) * 1.1) tackCount++;
-        else gybeCount++;
-      }
-    }
-  }
-
-  // Distance using haversine
-  let distanceNm = 0;
-  const lats = rows.map(r => parseFloat(r.latitude)).filter(v => !isNaN(v));
-  const lons = rows.map(r => parseFloat(r.longitude)).filter(v => !isNaN(v));
-  if (lats.length > 1 && lats.length === lons.length) {
-    for (let i = 1; i < lats.length; i++) {
-      const dLat = (lats[i] - lats[i-1]) * Math.PI / 180;
-      const dLon = (lons[i] - lons[i-1]) * Math.PI / 180;
-      const a = Math.sin(dLat/2)**2 + Math.cos(lats[i-1]*Math.PI/180) * Math.cos(lats[i]*Math.PI/180) * Math.sin(dLon/2)**2;
-      distanceNm += 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)) * 3440.065;
-    }
-  }
-
-  // Duration from timestamps
-  let durationMin = 0;
-  const timestamps = rows.map(r => r.timestamp).filter(Boolean);
-  if (timestamps.length > 1) {
-    const first = new Date(timestamps[0]);
-    const last = new Date(timestamps[timestamps.length - 1]);
-    if (!isNaN(first) && !isNaN(last)) durationMin = (last - first) / 60000;
-  }
-  if (durationMin <= 0 && rows.length > 1) durationMin = rows.length / 60; // fallback: assume 1Hz
-
-  // Build a condensed summary for AI (sample every Nth row to keep under ~200 rows)
-  const sampleInterval = Math.max(1, Math.floor(rows.length / 200));
-  const sampledRows = rows.filter((_, i) => i % sampleInterval === 0);
-  const csvSummaryLines = [Object.keys(colMap).join(",")];
-  for (const r of sampledRows) {
-    csvSummaryLines.push(Object.keys(colMap).map(k => r[k] || "").join(","));
-  }
-
-  return {
-    rowCount: rows.length,
-    durationMinutes: Math.round(durationMin * 10) / 10,
-    distanceNm: Math.round(distanceNm * 100) / 100,
-    avgSpeed: Math.round(avg(speeds) * 100) / 100,
-    maxSpeed: Math.round(Math.max(0, ...speeds) * 100) / 100,
-    avgHeel: Math.round(avg(heels) * 10) / 10,
-    avgVmg: Math.round(avg(vmgs) * 100) / 100,
-    tackCount,
-    gybeCount,
-    csvSummary: csvSummaryLines.join("\n")
-  };
+  return computeTelemetryStats(rows, colMap);
 }
 
+// ---- API IMPORT PATH (NEW) ----
+
+// Parse the Vakaros REST API response format: { Fields: [...], Rows: [[...], ...] }
+function parseVakarosTelemetryResponse(telData) {
+  const { Fields, Rows } = telData;
+  if (!Fields || !Fields.length) throw new Error('No field definitions in API response');
+  if (!Rows || Rows.length === 0) throw new Error('No telemetry rows returned — check your time range');
+
+  // Map field names to indices
+  const aliases = {
+    timestamp: ['timestamp','time','datetime','utc'],
+    latitude:  ['latitude','lat'],
+    longitude: ['longitude','lon','lng'],
+    speed:     ['speed','sog','speed_kts','boat_speed'],
+    heading:   ['heading','hdg','cog','course'],
+    heel:      ['heel','heel_angle'],
+    trim:      ['trim','pitch'],
+    vmg:       ['vmg','vmg_kts']
+  };
+
+  const colMap = {};  // key -> field index
+  for (const [key, names] of Object.entries(aliases)) {
+    const i = Fields.findIndex(f => names.includes(f.toLowerCase().replace(/[^a-z0-9_]/g,'')));
+    if (i !== -1) colMap[key] = i;
+  }
+
+  // Convert array rows to objects
+  const rows = Rows.map(r => {
+    const obj = {};
+    for (const [key, idx] of Object.entries(colMap)) {
+      obj[key] = r[idx] !== null && r[idx] !== undefined ? String(r[idx]) : '';
+    }
+    return obj;
+  });
+
+  return computeTelemetryStats(rows, colMap);
+}
+
+// ---- VAKAROS REST API HELPER ----
+
+const VAKAROS_API_BASE = 'https://teleapi.regatta.app';
+
+async function vakarosApiFetch(path, apiToken) {
+  const res = await fetch(`${VAKAROS_API_BASE}${path}`, {
+    headers: { 'Authorization': `Bearer ${apiToken}` }
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Vakaros API ${res.status}: ${path}`);
+  }
+  return res.json();
+}
+
+// ---- ROUTES ----
+
+// Save/update Vakaros API token
+app.post('/vakaros/token', requireAuth, (req, res) => {
+  const token = (req.body.api_token || '').trim();
+  if (!token) return res.status(400).json({ error: 'API token required' });
+  db.prepare('INSERT OR REPLACE INTO vakaros_api_keys (user_id, api_token) VALUES (?,?)')
+    .run(req.session.user.id, token);
+  res.json({ success: true });
+});
+
+// Discover event: returns divisions, races, and time ranges — used to populate the import UI
+app.get('/vakaros/api/events/:event_id', requireAuth, async (req, res) => {
+  const keyRow = db.prepare('SELECT api_token FROM vakaros_api_keys WHERE user_id = ?').get(req.session.user.id);
+  if (!keyRow) return res.status(401).json({ error: 'No Vakaros API token saved. Add your token first.' });
+
+  try {
+    const [summary, times] = await Promise.all([
+      vakarosApiFetch(`/telemetry/racing-summary/${encodeURIComponent(req.params.event_id)}`, keyRow.api_token),
+      vakarosApiFetch(`/telemetry/event-times/${encodeURIComponent(req.params.event_id)}`, keyRow.api_token)
+    ]);
+
+    // Also fetch short_ids for each division (needed for WebSocket live tracking)
+    const divisions = summary.divisions || [];
+    const shortIds = {};
+    await Promise.all(divisions.map(async d => {
+      try {
+        const data = await vakarosApiFetch(
+          `/division/short-id/${encodeURIComponent(req.params.event_id)}/${encodeURIComponent(d.division)}`,
+          keyRow.api_token
+        );
+        shortIds[d.division] = data.short_id;
+      } catch(e) {}
+    }));
+
+    res.json({ summary, times, shortIds });
+  } catch(err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Import telemetry for a specific event+division+time range into vakaros_uploads
+app.post('/vakaros/import-event', requireAuth, async (req, res) => {
+  const { event_id, division, after, before, race_log_id, label } = req.body;
+  if (!event_id || !after) return res.status(400).json({ error: 'event_id and after timestamp are required' });
+
+  const keyRow = db.prepare('SELECT api_token FROM vakaros_api_keys WHERE user_id = ?').get(req.session.user.id);
+  if (!keyRow) return res.status(401).json({ error: 'No Vakaros API token saved.' });
+
+  try {
+    const params = new URLSearchParams({ after: String(after), limit: '100000' });
+    if (division) params.set('division', division);
+    if (before)   params.set('before', String(before));
+
+    const telData = await vakarosApiFetch(
+      `/telemetry/event/${encodeURIComponent(event_id)}?${params}`,
+      keyRow.api_token
+    );
+
+    const stats = parseVakarosTelemetryResponse(telData);
+    const filename = label || `${event_id}${division ? ' / ' + division : ''} (API)`;
+
+    db.prepare(`
+      INSERT INTO vakaros_uploads
+        (user_id, race_log_id, filename, row_count, duration_minutes, distance_nm,
+         avg_speed, max_speed, avg_heel, avg_vmg, tack_count, gybe_count, csv_summary,
+         import_source, event_id, division)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    `).run(
+      req.session.user.id, race_log_id || null, filename,
+      stats.rowCount, stats.durationMinutes, stats.distanceNm,
+      stats.avgSpeed, stats.maxSpeed, stats.avgHeel, stats.avgVmg,
+      stats.tackCount, stats.gybeCount, stats.csvSummary,
+      'api', event_id, division || null
+    );
+
+    res.json({ success: true, stats, filename });
+  } catch(err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Live race tracking page
+app.get('/vakaros/live/:event_id', requireAuth, async (req, res) => {
+  const keyRow = db.prepare('SELECT api_token FROM vakaros_api_keys WHERE user_id = ?').get(req.session.user.id);
+  if (!keyRow) return res.redirect('/coaching?notice=add-token');
+
+  try {
+    const [summary, times] = await Promise.all([
+      vakarosApiFetch(`/telemetry/racing-summary/${encodeURIComponent(req.params.event_id)}`, keyRow.api_token),
+      vakarosApiFetch(`/telemetry/event-times/${encodeURIComponent(req.params.event_id)}`, keyRow.api_token)
+    ]);
+
+    const divisions = summary.divisions || [];
+
+    // Fetch short_ids for WebSocket topics
+    const shortIds = {};
+    await Promise.all(divisions.map(async d => {
+      try {
+        const data = await vakarosApiFetch(
+          `/division/short-id/${encodeURIComponent(req.params.event_id)}/${encodeURIComponent(d.division)}`,
+          keyRow.api_token
+        );
+        shortIds[d.division] = data.short_id;
+      } catch(e) {}
+    }));
+
+    res.send(renderLiveTrackingPage(req.params.event_id, divisions, shortIds, times, keyRow.api_token));
+  } catch(err) {
+    res.status(500).send(`<h2>Error loading event</h2><p>${err.message}</p><a href="/coaching">Back</a>`);
+  }
+});
+
+// Existing CSV upload routes — UNCHANGED
 app.get("/vakaros", requireAuth, (req, res) => { res.redirect("/coaching"); });
 
 app.get("/coaching", requireAuth, (req, res) => {
@@ -6050,7 +6236,8 @@ app.get("/coaching", requireAuth, (req, res) => {
     ORDER BY vu.created_at DESC
   `).all(req.session.user.id);
   const pastReports = db.prepare("SELECT * FROM coaching_reports WHERE user_id = ? ORDER BY created_at DESC LIMIT 10").all(req.session.user.id);
-  res.send(renderPage(coachingPage(logs, uploads, pastReports, null, null, lang), req.session.user, lang));
+  const hasApiToken = !!db.prepare('SELECT 1 FROM vakaros_api_keys WHERE user_id = ?').get(req.session.user.id);
+  res.send(renderPage(coachingPage(logs, uploads, pastReports, null, null, lang, hasApiToken), req.session.user, lang));
 });
 
 app.post("/vakaros/upload", requireAuth, upload.single("vakaros_csv"), (req, res) => {
@@ -6061,23 +6248,19 @@ app.post("/vakaros/upload", requireAuth, upload.single("vakaros_csv"), (req, res
     const pastReports = db.prepare("SELECT * FROM coaching_reports WHERE user_id = ? ORDER BY created_at DESC LIMIT 10").all(req.session.user.id);
     return res.send(renderPage(coachingPage(logs, uploads, pastReports, null, "Please select a CSV file.", lang), req.session.user, lang));
   }
-
   try {
     const csvText = req.file.buffer.toString("utf-8");
     const stats = parseVakarosCsv(csvText);
     const raceLogId = req.body.race_log_id || null;
-
     db.prepare(`
-      INSERT INTO vakaros_uploads (user_id, race_log_id, filename, row_count, duration_minutes, distance_nm, avg_speed, max_speed, avg_heel, avg_vmg, tack_count, gybe_count, csv_summary)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+      INSERT INTO vakaros_uploads (user_id, race_log_id, filename, row_count, duration_minutes, distance_nm, avg_speed, max_speed, avg_heel, avg_vmg, tack_count, gybe_count, csv_summary, import_source)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'csv')
     `).run(req.session.user.id, raceLogId, req.file.originalname, stats.rowCount, stats.durationMinutes, stats.distanceNm, stats.avgSpeed, stats.maxSpeed, stats.avgHeel, stats.avgVmg, stats.tackCount, stats.gybeCount, stats.csvSummary);
-
     res.redirect("/coaching");
   } catch (err) {
-    const logs2 = db.prepare("SELECT * FROM race_logs WHERE user_id = ? ORDER BY race_date DESC").all(req.session.user.id);
     const uploads = db.prepare("SELECT vu.*, rl.race_name, rl.race_date, vc.coaching_report, vc.id as coaching_id FROM vakaros_uploads vu LEFT JOIN race_logs rl ON vu.race_log_id = rl.id LEFT JOIN vakaros_coaching vc ON vc.upload_id = vu.id WHERE vu.user_id = ? ORDER BY vu.created_at DESC").all(req.session.user.id);
     const pastReports = db.prepare("SELECT * FROM coaching_reports WHERE user_id = ? ORDER BY created_at DESC LIMIT 10").all(req.session.user.id);
-    res.send(renderPage(coachingPage(logs2, uploads, pastReports, null, "Error parsing CSV: " + err.message, lang), req.session.user, lang));
+    res.send(renderPage(coachingPage(logs, uploads, pastReports, null, "Error parsing CSV: " + err.message, lang), req.session.user, lang));
   }
 });
 
@@ -6087,229 +6270,12 @@ app.post("/vakaros/share", requireAuth, upload.single("file"), (req, res) => {
     const csvText = req.file.buffer.toString("utf-8");
     const stats = parseVakarosCsv(csvText);
     db.prepare(`
-      INSERT INTO vakaros_uploads (user_id, race_log_id, filename, row_count, duration_minutes, distance_nm, avg_speed, max_speed, avg_heel, avg_vmg, tack_count, gybe_count, csv_summary)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+      INSERT INTO vakaros_uploads (user_id, race_log_id, filename, row_count, duration_minutes, distance_nm, avg_speed, max_speed, avg_heel, avg_vmg, tack_count, gybe_count, csv_summary, import_source)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'csv')
     `).run(req.session.user.id, null, req.file.originalname || "Shared session", stats.rowCount, stats.durationMinutes, stats.distanceNm, stats.avgSpeed, stats.maxSpeed, stats.avgHeel, stats.avgVmg, stats.tackCount, stats.gybeCount, stats.csvSummary);
     res.redirect("/coaching");
   } catch (err) {
     res.redirect("/coaching");
-  }
-});
-
-// Full coaching report — uses ALL race history + optional Vakaros data
-app.post("/coaching/generate", requireAuth, async (req, res) => {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return res.status(500).json({ error: "ANTHROPIC_API_KEY not configured. Set it in Railway environment variables." });
-
-  const userId = req.session.user.id;
-
-  // Gather ALL data sources
-  const allLogs = db.prepare("SELECT * FROM race_logs WHERE user_id = ? ORDER BY race_date DESC").all(userId);
-  const vakarosUploads = db.prepare("SELECT * FROM vakaros_uploads WHERE user_id = ? ORDER BY created_at ASC").all(userId);
-  const user = db.prepare("SELECT * FROM users WHERE id = ?").get(userId);
-
-  if (allLogs.length === 0) return res.status(400).json({ error: "Log at least one race or practice session first to get coaching." });
-
-  // Build race history summary
-  const raceHistory = allLogs.slice(0, 30).map(r => {
-    const parts = [`${r.race_name} (${r.race_date})`];
-    if (r.location) parts.push(`Location: ${r.location}`);
-    if (r.finish_position) parts.push(`Finish: ${r.finish_position}${r.fleet_size ? ' of ' + r.fleet_size : ''}`);
-    if (r.wind_speed) parts.push(`Wind: ${r.wind_speed}${r.wind_direction ? ' ' + r.wind_direction : ''}`);
-    if (r.sea_state) parts.push(`Sea: ${r.sea_state}`);
-    if (r.main_maker || r.mainsail_used) parts.push(`Main: ${r.main_maker || ''} ${r.mainsail_used || ''}`);
-    if (r.jib_maker || r.jib_used) parts.push(`Jib: ${r.jib_maker || ''} ${r.jib_used || ''}`);
-    if (r.mast_rake) parts.push(`Mast rake: ${r.mast_rake}`);
-    if (r.shroud_tension) parts.push(`Shroud tension: ${r.shroud_tension}`);
-    if (r.cunningham) parts.push(`Cunningham: ${r.cunningham}`);
-    if (r.vang) parts.push(`Vang: ${r.vang}`);
-    if (r.outhaul) parts.push(`Outhaul: ${r.outhaul}`);
-    if (r.jib_lead) parts.push(`Jib lead: ${r.jib_lead}`);
-    if (r.performance_rating) parts.push(`Self-rating: ${r.performance_rating}/10`);
-    if (r.notes) parts.push(`Notes: ${r.notes}`);
-    return parts.join(' | ');
-  }).join('\n');
-
-  // Separate practice sessions (no finish position)
-  const practices = allLogs.filter(r => !r.finish_position && r.notes);
-  const practiceNotes = practices.slice(0, 15).map(r =>
-    `${r.race_name} (${r.race_date}): ${r.notes}`
-  ).join('\n');
-
-  // Results trend
-  const results = allLogs.filter(r => r.finish_position && r.fleet_size).slice(0, 20);
-  const resultsSummary = results.length > 0
-    ? results.map(r => `${r.race_name} ${r.race_date}: ${r.finish_position}/${r.fleet_size}`).join(', ')
-    : 'No race results with positions logged yet';
-
-  // Vakaros data summary — ALL sessions with trend analysis
-  let vakarosContext = '';
-  if (vakarosUploads.length > 0) {
-    // Compute trends across all sessions (ordered chronologically)
-    const speeds = vakarosUploads.map(v => v.avg_speed).filter(v => v > 0);
-    const vmgs = vakarosUploads.map(v => v.avg_vmg).filter(v => v > 0);
-    const heels = vakarosUploads.map(v => v.avg_heel).filter(v => v > 0);
-    const tacks = vakarosUploads.map(v => v.tack_count).filter(v => v >= 0);
-    const avg = arr => arr.length ? (arr.reduce((a,b) => a+b, 0) / arr.length).toFixed(2) : 'N/A';
-    const firstHalf = arr => arr.slice(0, Math.ceil(arr.length / 2));
-    const secondHalf = arr => arr.slice(Math.ceil(arr.length / 2));
-
-    let trendSummary = `\nTREND ANALYSIS ACROSS ${vakarosUploads.length} SESSIONS (oldest to newest):\n`;
-    trendSummary += `- Avg Speed trend: first half avg ${avg(firstHalf(speeds))} kts → second half avg ${avg(secondHalf(speeds))} kts\n`;
-    trendSummary += `- Avg VMG trend: first half avg ${avg(firstHalf(vmgs))} kts → second half avg ${avg(secondHalf(vmgs))} kts\n`;
-    trendSummary += `- Avg Heel trend: first half avg ${avg(firstHalf(heels))}° → second half avg ${avg(secondHalf(heels))}°\n`;
-    trendSummary += `- Tack count trend: first half avg ${avg(firstHalf(tacks))} → second half avg ${avg(secondHalf(tacks))}\n`;
-    trendSummary += `- Overall avg speed: ${avg(speeds)} kts, Overall avg VMG: ${avg(vmgs)} kts, Overall avg heel: ${avg(heels)}°\n`;
-
-    // Include all session summaries (skip raw csv_summary for older sessions to save tokens)
-    const sessionDetails = vakarosUploads.map((v, i) => {
-      const base = `Session ${i+1}: ${v.filename} (${v.created_at})\n  Duration: ${v.duration_minutes}m | Distance: ${v.distance_nm}nm | Avg Speed: ${v.avg_speed}kts | Max: ${v.max_speed}kts | Avg Heel: ${v.avg_heel}° | Avg VMG: ${v.avg_vmg}kts | Tacks: ${v.tack_count} | Gybes: ${v.gybe_count}`;
-      // Include raw data only for the 3 most recent sessions
-      if (i >= vakarosUploads.length - 3 && v.csv_summary) {
-        return base + '\n  Sampled data:\n' + v.csv_summary;
-      }
-      return base;
-    }).join('\n\n');
-
-    vakarosContext = `\n\n--- VAKAROS TELEMETRY DATA (${vakarosUploads.length} TOTAL SESSIONS) ---\n${trendSummary}\nINDIVIDUAL SESSIONS:\n${sessionDetails}`;
-  }
-
-  // Data completeness stats for "Improve Your Coaching" section
-  const logsWithWind = allLogs.filter(r => r.wind_speed).length;
-  const logsWithSettings = allLogs.filter(r => r.mast_rake || r.shroud_tension || r.jib_lead).length;
-  const logsWithNotes = allLogs.filter(r => r.notes && r.notes.length > 20).length;
-  const logsWithRating = allLogs.filter(r => r.performance_rating).length;
-  const logsWithSails = allLogs.filter(r => r.main_maker || r.jib_maker || r.mainsail_used || r.jib_used).length;
-  const logsWithCrewWeight = allLogs.filter(r => r.skipper_weight && r.crew_weight).length;
-  const dataCompleteness = `
---- DATA COMPLETENESS (for "Improve Your Coaching" section) ---
-Total race/practice logs: ${allLogs.length}
-Races with finish positions: ${results.length}
-Races with fleet size: ${allLogs.filter(r => r.fleet_size).length}
-Logs with wind conditions: ${logsWithWind} of ${allLogs.length}
-Logs with boat settings (mast rake, shroud tension, or jib lead): ${logsWithSettings} of ${allLogs.length}
-Logs with sail info (maker/model): ${logsWithSails} of ${allLogs.length}
-Logs with detailed notes (>20 chars): ${logsWithNotes} of ${allLogs.length}
-Logs with self-performance rating: ${logsWithRating} of ${allLogs.length}
-Logs with crew weights: ${logsWithCrewWeight} of ${allLogs.length}
-Practice sessions with notes: ${practices.length}
-Vakaros telemetry sessions: ${vakarosUploads.length}
-`;
-
-  try {
-    const client = new Anthropic({ apiKey });
-    const msg = await client.messages.create({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 3000,
-      system: `You are an expert Snipe class sailing coach with 30+ years of experience coaching at the Olympic level. You have deep knowledge of:
-
-SNIPE TUNING by wind range:
-- Light air (0-8 kts): Mast rake 25'8"-25'10", shroud tension loose (16-18), jib leads forward, minimal cunningham/vang, outhaul eased
-- Medium air (8-15 kts): Mast rake 25'6"-25'8", shroud tension medium (20-24), cunningham to first wrinkle, moderate vang, outhaul moderate
-- Heavy air (15+ kts): Mast rake 25'4"-25'6", shroud tension firm (26-30), max cunningham, heavy vang, outhaul tight, jib leads back
-- Spreader length: typically 18.5"-19.5" with 2-4" sweep
-
-SNIPE TACTICS:
-- Starting: line bias recognition, acceleration timing, managing dirty air
-- Upwind: pointing vs. footing modes, playing shifts and puffs, tacking efficiency
-- Mark roundings: wide entry/tight exit, smooth transitions, crew coordination
-- Downwind: wave angles, gybe timing, apparent wind sailing
-- VMG targets: 3.2-3.6 kts upwind in 10-12 kts, 4.0-5.0 kts reaching/downwind
-
-YOUR COACHING STYLE:
-- Be direct, specific, and actionable — never generic
-- Reference actual numbers and patterns from the sailor's data
-- Identify the TOP 3 things that will make the biggest improvement
-- Connect tuning choices to results where possible
-- When suggesting drills, be specific about what to practice and how to measure improvement
-- Reference "Crew College" modules when relevant (e.g., "Review the Upwind Tuning module in Crew College for detailed guidance on this")
-- If Vakaros telemetry is available, add a dedicated Telemetry Insights section
-- When MULTIPLE Vakaros sessions are available, analyze TRENDS across all sessions:
-  * Are speed/VMG improving, declining, or plateauing over time?
-  * Is heel angle becoming more consistent (a sign of better boat handling)?
-  * Are tack counts decreasing (could mean better lane management or fewer tactical errors)?
-  * Call out specific improvements with numbers, e.g. "Your avg VMG improved from 3.1 to 3.4 kts over your last 8 sessions"
-  * Identify sessions that were outliers (unusually good or bad) and hypothesize why
-
-FORMAT YOUR REPORT WITH THESE EXACT SECTIONS:
-## Overall Performance Summary
-(Based on recent results trend — are they improving, plateauing, or regressing?)
-
-## Top 3 Priority Improvements
-(The three things that will have the biggest impact right now)
-
-## Upwind Analysis
-(Pointing, VMG, tack efficiency, sail trim patterns)
-
-## Downwind Analysis
-(Speed, gybe efficiency, wave technique)
-
-## Boat Handling & Starts
-(Tacking, gybing, mark roundings, start execution)
-
-## What to Focus on in Your NEXT Session
-(Specific drills with measurable goals)
-
-## Relevant Crew College Sections to Review
-(Point them to specific learning resources)
-
-${vakarosUploads.length > 0 ? '## Telemetry Insights\n(Trends across ALL ' + vakarosUploads.length + ' Vakaros sessions — speed, VMG, heel, tack efficiency over time)\n\n' : ''}## 📊 Improve Your Coaching
-This section MUST always appear as the FINAL section of the report. Use the DATA COMPLETENESS stats provided to generate:
-
-1. **Data Quality Rating**: Rate the coaching quality from 1-5 stars based on available data. Use ⭐ emoji. Guidelines:
-   - ⭐ (1): Fewer than 3 logs, almost no details
-   - ⭐⭐ (2): 3-5 logs but missing most settings/conditions
-   - ⭐⭐⭐ (3): 6-10 logs with some settings and conditions filled in
-   - ⭐⭐⭐⭐ (4): 10+ logs with good detail, OR any logs + Vakaros data
-   - ⭐⭐⭐⭐⭐ (5): 15+ logs with settings, notes, ratings, AND Vakaros telemetry
-
-2. **What You're Providing**: Acknowledge specifically what data they ARE logging well (be encouraging). Then identify the biggest gaps — what's missing that would most improve the coaching.
-
-3. **Log This Next Time**: Give 2-3 specific, actionable suggestions for what to add to their next race log. Name the exact fields (e.g., "mast rake", "jib lead position", "performance rating"). Focus on what would unlock the most insight.
-
-4. **Your Progress Milestones**: Tell them where they stand relative to milestones:
-   - 5 races: basic pattern recognition unlocked
-   - 10 races: finishing position trends become meaningful
-   - 15 races: deep tuning correlations available
-   - 5 Vakaros sessions: telemetry coaching unlocked
-   - 10 Vakaros sessions: session-over-session trend analysis
-   Use their actual counts and tell them how close they are to the next milestone.`,
-      messages: [{
-        role: "user",
-        content: `Generate a comprehensive coaching report for this Snipe sailor.
-
-SAILOR PROFILE:
-- Name: ${user.display_name || user.username}
-- Boat: Snipe #${user.snipe_number || 'unknown'}
-- Total races logged: ${allLogs.length}
-- Results with positions: ${results.length}
-- Data sharing: ${user.data_sharing === 'share' ? 'SHARED — their anonymized data contributes to fleet-wide insights. Include a brief note acknowledging this in the report summary.' : 'PRIVATE — coaching uses only their personal data. Do NOT reference fleet benchmarking or community comparisons.'}
-
-RECENT RESULTS TREND:
-${resultsSummary}
-
-FULL RACE HISTORY (most recent first):
-${raceHistory}
-
-${practiceNotes ? 'PRACTICE SESSION NOTES:\n' + practiceNotes : '(No practice sessions with notes logged)'}
-${vakarosContext}
-
-${dataCompleteness}
-
-Analyze ALL of this data to provide a detailed, personalized coaching report. Look for patterns across races — what conditions they do well in, what settings they use, where results drop off, and what the notes reveal about their sailing. Be sure to include the "📊 Improve Your Coaching" section at the very end using the DATA COMPLETENESS stats above.`
-      }]
-    });
-
-    const report = msg.content[0].text;
-
-    // Save coaching report
-    const insertResult = db.prepare("INSERT INTO coaching_reports (user_id, report_type, race_count, has_vakaros, coaching_report) VALUES (?,?,?,?,?)")
-      .run(userId, 'full', allLogs.length, vakarosUploads.length > 0 ? 1 : 0, report);
-
-    res.json({ report, reportId: insertResult.lastInsertRowid });
-  } catch (err) {
-    console.error("Anthropic API error:", err.message);
-    res.status(500).json({ error: "AI analysis failed: " + err.message });
   }
 });
 
@@ -6319,10 +6285,234 @@ app.post("/vakaros/delete/:uploadId", requireAuth, (req, res) => {
   res.redirect("/coaching");
 });
 
-app.post("/coaching/delete/:reportId", requireAuth, (req, res) => {
-  db.prepare("DELETE FROM coaching_reports WHERE id = ? AND user_id = ?").run(req.params.reportId, req.session.user.id);
-  res.redirect("/coaching");
-});
+// =============================================================================
+// LIVE TRACKING PAGE — rendered server-side, connects via WebSocket client-side
+// =============================================================================
+
+function renderLiveTrackingPage(eventId, divisions, shortIds, times, apiToken) {
+  const divOptions = divisions.map(d =>
+    `<option value="${escapeHtml(d.division)}" data-shortid="${escapeHtml(shortIds[d.division]||'')}">
+      ${escapeHtml(d.division)} (${(d.races||[]).length} race${(d.races||[]).length!==1?'s':''})
+    </option>`
+  ).join('');
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Live Race Tracking — ${escapeHtml(eventId)}</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:'Segoe UI',sans-serif;background:#0b1a2b;color:#e8eaf0;display:flex;flex-direction:column;height:100vh}
+    header{background:#0b3d6e;padding:12px 20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+    header h1{font-size:1.1rem;font-weight:600;color:#fff}
+    .controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-left:auto}
+    select,button{padding:7px 14px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.1);color:#fff;font-size:0.88rem;cursor:pointer}
+    button{background:#1a6fb5;border-color:#1a6fb5}button:hover{background:#1558a0}
+    #status{font-size:0.82rem;padding:4px 10px;border-radius:12px;background:rgba(255,255,255,0.1)}
+    #status.connected{background:#1a4a1a;color:#4caf50}
+    #status.error{background:#4a1a1a;color:#f44336}
+    #map{flex:1}
+    #sidebar{position:absolute;right:12px;top:80px;width:260px;background:rgba(11,30,50,0.92);border-radius:10px;border:1px solid rgba(255,255,255,0.1);padding:12px;z-index:1000;max-height:calc(100vh - 100px);overflow-y:auto}
+    #sidebar h3{font-size:0.85rem;color:#90caf9;margin-bottom:10px;text-transform:uppercase;letter-spacing:0.04em}
+    .boat-card{padding:8px 10px;border-radius:6px;background:rgba(255,255,255,0.06);margin-bottom:6px;font-size:0.82rem;border-left:3px solid #1a6fb5}
+    .boat-card .sail{font-weight:600;color:#e8eaf0;font-size:0.9rem}
+    .boat-card .stats{color:#90a4ae;margin-top:3px}
+    .boat-card .status-badge{display:inline-block;padding:2px 7px;border-radius:10px;font-size:0.73rem;font-weight:600;margin-top:4px}
+    .badge-STARTED{background:#1b5e20;color:#a5d6a7}
+    .badge-OCS{background:#7f0000;color:#ffcdd2}
+    .badge-NOT_STARTED{background:#1a237e;color:#c5cae9}
+    .race-info{background:rgba(255,255,255,0.06);border-radius:6px;padding:8px 10px;margin-bottom:10px;font-size:0.82rem}
+    .race-info .flag{display:inline-block;background:#b71c1c;color:#fff;padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:700;margin-right:4px;margin-top:3px}
+  </style>
+</head>
+<body>
+<header>
+  <h1>⛵ Live Tracking — ${escapeHtml(eventId)}</h1>
+  <div class="controls">
+    <select id="divisionSelect">${divOptions}</select>
+    <button onclick="connect()">Connect</button>
+    <button onclick="disconnect()" style="background:#5a1a1a;border-color:#5a1a1a">Disconnect</button>
+    <span id="status">Disconnected</span>
+  </div>
+</header>
+<div style="position:relative;flex:1;display:flex">
+  <div id="map"></div>
+  <div id="sidebar">
+    <div class="race-info" id="raceInfo">Select a division and connect.</div>
+    <h3>Participants</h3>
+    <div id="boatList"><p style="color:#546e7a;font-size:0.82rem">No data yet</p></div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  const API_TOKEN = ${JSON.stringify(apiToken)};
+  const SHORT_IDS = ${JSON.stringify(shortIds)};
+
+  const map = L.map('map').setView([0,0],2);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+    attribution:'© OpenStreetMap',maxZoom:19
+  }).addTo(map);
+
+  let ws = null;
+  let markers = {};
+  let courseLayers = [];
+  let hasSetView = false;
+
+  const BOAT_COLORS = ['#2196f3','#f44336','#4caf50','#ff9800','#9c27b0','#00bcd4','#ffeb3b','#ff5722','#8bc34a','#e91e63'];
+  let boatColorMap = {};
+  let colorIdx = 0;
+
+  function getBoatColor(serial) {
+    if (!boatColorMap[serial]) {
+      boatColorMap[serial] = BOAT_COLORS[colorIdx++ % BOAT_COLORS.length];
+    }
+    return boatColorMap[serial];
+  }
+
+  function setStatus(msg, cls='') {
+    const el = document.getElementById('status');
+    el.textContent = msg;
+    el.className = cls;
+  }
+
+  function connect() {
+    if (ws) ws.close();
+    const sel = document.getElementById('divisionSelect');
+    const shortId = SHORT_IDS[sel.value] || sel.options[sel.selectedIndex].dataset.shortid;
+    if (!shortId) { setStatus('No short ID for this division', 'error'); return; }
+
+    setStatus('Connecting…');
+    ws = new WebSocket('wss://live.regatta.app/ws');
+
+    ws.onopen = () => {
+      setStatus('Authenticating…');
+      ws.send(JSON.stringify({ action:'auth', token: API_TOKEN }));
+    };
+
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'auth_success') {
+        setStatus('Subscribing…');
+        ws.send(JSON.stringify({ action:'subscribe', topic:'live/'+shortId }));
+      } else if (msg.type === 'subscription_confirmed') {
+        setStatus('Live — ' + sel.value, 'connected');
+      } else if (msg.type === 'auth_failed') {
+        setStatus('Auth failed: ' + msg.error, 'error');
+      } else if (msg.type === 'subscription_error') {
+        setStatus('Error: ' + msg.error, 'error');
+      } else if (msg.type === 'pong') {
+        // keepalive
+      } else if (msg.race !== undefined) {
+        handleRaceUpdate(msg, sel.value);
+      }
+    };
+
+    ws.onerror = () => setStatus('Connection error', 'error');
+    ws.onclose = () => setStatus('Disconnected');
+
+    // Keepalive ping every 30s
+    clearInterval(window._pingInterval);
+    window._pingInterval = setInterval(() => {
+      if (ws && ws.readyState === 1) ws.send(JSON.stringify({ action:'ping', timestamp: new Date().toISOString() }));
+    }, 30000);
+  }
+
+  function disconnect() {
+    clearInterval(window._pingInterval);
+    if (ws) { ws.close(); ws = null; }
+    setStatus('Disconnected');
+  }
+
+  function handleRaceUpdate(data, division) {
+    // Update race info panel
+    const stageColors = { IN_PROGRESS:'#2e7d32', STARTING:'#e65100', PRE_START:'#1a237e' };
+    const stageColor = stageColors[data.race_stage] || '#333';
+    const flags = (data.flags||[]).map(f => '<span class="flag">'+f+'</span>').join('');
+    document.getElementById('raceInfo').innerHTML =
+      '<strong style="color:#90caf9">'+division+'</strong><br>'+
+      'Race '+(data.race||'?')+' Start '+(data.start||'?')+'<br>'+
+      '<span style="background:'+stageColor+';padding:2px 8px;border-radius:4px;font-size:0.78rem;font-weight:700">'+(data.race_stage||'?')+'</span>'+
+      flags+
+      (data.current_start_ts ? '<br><span style="color:#78909c;font-size:0.78rem">Start: '+new Date(data.current_start_ts).toLocaleTimeString()+'</span>' : '');
+
+    // Draw course marks
+    courseLayers.forEach(l => map.removeLayer(l));
+    courseLayers = [];
+    const achievements = data.course?.achievements || [];
+    for (const ach of achievements) {
+      for (const [devId, dev] of Object.entries(ach.deviceData || {})) {
+        if (!dev.position) continue;
+        const markColors = { PIN:'#ffeb3b', BOAT:'#ff9800', FINISH_LEFT:'#e53935', FINISH_RIGHT:'#e53935', GENERIC_MARK:'#ce93d8' };
+        const col = markColors[dev.markType] || '#90a4ae';
+        const circle = L.circleMarker([dev.position.latitude, dev.position.longitude], {
+          radius:8, fillColor:col, color:'#fff', weight:2, fillOpacity:0.9
+        }).bindPopup(ach.type+'<br>'+dev.markType).addTo(map);
+        courseLayers.push(circle);
+      }
+    }
+
+    // Draw/update participants
+    const participants = data.participants || [];
+    const seen = new Set();
+
+    for (const p of participants) {
+      if (!p.position) continue;
+      seen.add(p.serial_number);
+      const color = getBoatColor(p.serial_number);
+      const latlng = [p.position.latitude, p.position.longitude];
+
+      if (!hasSetView && participants.length > 0) {
+        map.setView(latlng, 13);
+        hasSetView = true;
+      }
+
+      if (!markers[p.serial_number]) {
+        const icon = L.divIcon({
+          html: \`<div style="width:14px;height:14px;background:\${color};border:2px solid #fff;border-radius:50%;transform:rotate(\${p.heading||0}deg)"></div>\`,
+          className:'', iconSize:[14,14], iconAnchor:[7,7]
+        });
+        markers[p.serial_number] = L.marker(latlng, {icon}).addTo(map);
+      } else {
+        markers[p.serial_number].setLatLng(latlng);
+      }
+      markers[p.serial_number].bindPopup(
+        \`<strong>\${p.sail_number||p.serial_number}</strong><br>
+         SOG: \${(p.sog||0).toFixed(1)} kts | Hdg: \${Math.round(p.heading||0)}°<br>
+         Heel: \${(p.heel||0).toFixed(1)}° | Pitch: \${(p.pitch||0).toFixed(1)}°<br>
+         Status: \${p.status||'?'}\`
+      );
+    }
+
+    // Remove markers for boats no longer in update
+    for (const serial of Object.keys(markers)) {
+      if (!seen.has(parseInt(serial))) { map.removeLayer(markers[serial]); delete markers[serial]; }
+    }
+
+    // Update sidebar boat list
+    const sorted = [...participants].sort((a,b) => {
+      const order = {STARTED:0,OCS:1,NOT_STARTED:2,UNKNOWN:3};
+      return (order[a.status]||9) - (order[b.status]||9);
+    });
+    document.getElementById('boatList').innerHTML = sorted.map(p =>
+      \`<div class="boat-card">
+        <div class="sail">\${p.sail_number||('#'+p.serial_number)}</div>
+        <div class="stats">\${(p.sog||0).toFixed(1)} kts | \${Math.round(p.heading||0)}° | heel \${(p.heel||0).toFixed(1)}°</div>
+        <span class="status-badge badge-\${p.status||'UNKNOWN'}">\${p.status||'?'}</span>
+      </div>\`
+    ).join('') || '<p style="color:#546e7a;font-size:0.82rem">No participants</p>';
+  }
+
+  // Auto-connect on load if there's exactly one division
+  if (Object.keys(SHORT_IDS).length === 1) connect();
+</script>
+</body>
+</html>`;
+}
+
 
 // --- Share with Crew ---
 app.post("/share/race/:id", requireAuth, (req, res) => {
