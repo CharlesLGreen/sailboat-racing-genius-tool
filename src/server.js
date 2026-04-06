@@ -595,7 +595,7 @@ app.get("/manifest.json", (req, res) => {
 app.get("/sw.js", (req, res) => {
   res.type("application/javascript");
   res.send(`
-    const CACHE_NAME = 'snipeovation-v1';
+    const CACHE_NAME = 'snipeovation-v2';
     const PRECACHE = ['/', '/logo.jpg', '/hero8.jpg'];
 
     self.addEventListener('install', e => {
