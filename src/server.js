@@ -1,7 +1,3 @@
-process.on('uncaughtException', (err) => { console.error('UNCAUGHT:', err); process.exit(1); });
-process.on('unhandledRejection', (err) => { console.error('UNHANDLED:', err); process.exit(1); });
-console.log('Starting server...');
-
 const express = require("express");
 const session = require("express-session");
 const Database = require("better-sqlite3");
