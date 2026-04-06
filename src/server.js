@@ -7416,63 +7416,63 @@ function coachingPage(raceLogs, uploads, pastReports, highlightUploadId, error, 
     `).join("")}
     ` : ''}
 
+    <!-- Import via Vakaros API (always visible) -->
+    <div class="form-card wide" style="margin-top:24px;margin-bottom:16px;border:2px solid #1a6fb5;">
+      <h4 style="color:#0b3d6e;margin:0 0 14px;font-size:1rem;">&#9889; Import via Vakaros API</h4>
+
+      <!-- Step 1: API Token -->
+      <div style="background:#f0f7ff;border:1px solid #d0e2f7;border-radius:10px;padding:14px;margin-bottom:14px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <span style="font-weight:700;color:#0b3d6e;font-size:0.9rem;">API Token</span>
+          ${hasApiToken ? '<span style="color:#059669;font-weight:700;font-size:0.88rem;">&#10003; Token saved</span>' : '<span style="color:#94a3b8;font-size:0.85rem;">Add token</span>'}
+        </div>
+        <div style="display:flex;gap:8px;">
+          <input type="text" id="vak-api-token" placeholder="Paste your Vakaros API token" style="flex:1;padding:8px 10px;border:2px solid #e2e8f0;border-radius:8px;font-size:0.88rem;">
+          <button class="btn btn-primary" style="padding:8px 16px;font-size:0.88rem;white-space:nowrap;" onclick="saveVakarosToken()">Save Token</button>
+        </div>
+        <div id="vak-token-status" style="margin-top:6px;font-size:0.82rem;"></div>
+      </div>
+
+      <!-- Step 2: Event Lookup -->
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px;margin-bottom:14px;">
+        <div style="font-weight:700;color:#0b3d6e;font-size:0.9rem;margin-bottom:8px;">Look Up Event</div>
+        <div style="display:flex;gap:8px;">
+          <input type="text" id="vak-event-id" placeholder="Event ID (e.g. my-regatta-2026)" style="flex:1;padding:8px 10px;border:2px solid #e2e8f0;border-radius:8px;font-size:0.88rem;">
+          <button class="btn btn-primary" style="padding:8px 16px;font-size:0.88rem;white-space:nowrap;" onclick="lookupVakarosEvent()">Look Up Event</button>
+        </div>
+        <div id="vak-event-status" style="margin-top:6px;font-size:0.82rem;"></div>
+      </div>
+
+      <!-- Step 3: Division/Race selector (hidden until event loaded) -->
+      <div id="vak-event-results" style="display:none;background:#ecfdf5;border:1px solid #86efac;border-radius:10px;padding:14px;margin-bottom:14px;">
+        <div style="font-weight:700;color:#059669;font-size:0.9rem;margin-bottom:10px;">&#9989; Event Loaded</div>
+        <div style="margin-bottom:10px;">
+          <label style="font-weight:600;color:#333;font-size:0.85rem;display:block;margin-bottom:4px;">Division / Race</label>
+          <select id="vak-division-select" style="width:100%;padding:8px 10px;border:2px solid #e2e8f0;border-radius:8px;font-size:0.88rem;" onchange="updateVakarosTimeRange()"></select>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+          <div style="flex:1;min-width:140px;">
+            <label style="font-weight:600;color:#333;font-size:0.82rem;display:block;margin-bottom:3px;">After (start)</label>
+            <input type="text" id="vak-after" readonly style="width:100%;padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:0.82rem;background:#f8fafc;color:#555;">
+          </div>
+          <div style="flex:1;min-width:140px;">
+            <label style="font-weight:600;color:#333;font-size:0.82rem;display:block;margin-bottom:3px;">Before (end)</label>
+            <input type="text" id="vak-before" readonly style="width:100%;padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:0.82rem;background:#f8fafc;color:#555;">
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+          <button class="btn btn-primary" style="padding:10px 24px;font-size:0.95rem;font-weight:700;" onclick="importVakarosEvent()">&#128229; Import Telemetry</button>
+          <a id="vak-live-link" href="#" target="_blank" style="color:#1a6fb5;font-weight:600;font-size:0.9rem;text-decoration:none;">&#9881;&#65039; Watch Live &rarr;</a>
+        </div>
+        <div id="vak-import-status" style="margin-top:8px;font-size:0.85rem;"></div>
+      </div>
+    </div>
+
     <!-- SECONDARY: Vakaros Upload -->
     <details style="margin-top:24px;" ${uploads.length > 0 ? 'open' : ''}>
       <summary style="cursor:pointer;color:#0b3d6e;font-weight:700;font-size:1.1rem;padding:12px 0;">
         &#128225; Vakaros Sensor Data ${uploads.length > 0 ? '<span style="font-size:0.85rem;color:#059669;font-weight:600;">(' + uploads.length + ' uploaded)</span>' : '<span style="font-size:0.85rem;color:#888;font-weight:400;">(optional &mdash; enhances coaching)</span>'}
       </summary>
-
-      <!-- Import via Vakaros API -->
-      <div class="form-card wide" style="margin-top:12px;margin-bottom:16px;border:2px solid #1a6fb5;">
-        <h4 style="color:#0b3d6e;margin:0 0 14px;font-size:1rem;">&#9889; Import via Vakaros API</h4>
-
-        <!-- Step 1: API Token -->
-        <div style="background:#f0f7ff;border:1px solid #d0e2f7;border-radius:10px;padding:14px;margin-bottom:14px;">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-            <span style="font-weight:700;color:#0b3d6e;font-size:0.9rem;">API Token</span>
-            ${hasApiToken ? '<span style="color:#059669;font-weight:700;font-size:0.88rem;">&#10003; Token saved</span>' : '<span style="color:#94a3b8;font-size:0.85rem;">Add token</span>'}
-          </div>
-          <div style="display:flex;gap:8px;">
-            <input type="text" id="vak-api-token" placeholder="Paste your Vakaros API token" style="flex:1;padding:8px 10px;border:2px solid #e2e8f0;border-radius:8px;font-size:0.88rem;">
-            <button class="btn btn-primary" style="padding:8px 16px;font-size:0.88rem;white-space:nowrap;" onclick="saveVakarosToken()">Save Token</button>
-          </div>
-          <div id="vak-token-status" style="margin-top:6px;font-size:0.82rem;"></div>
-        </div>
-
-        <!-- Step 2: Event Lookup -->
-        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px;margin-bottom:14px;">
-          <div style="font-weight:700;color:#0b3d6e;font-size:0.9rem;margin-bottom:8px;">Look Up Event</div>
-          <div style="display:flex;gap:8px;">
-            <input type="text" id="vak-event-id" placeholder="Event ID (e.g. my-regatta-2026)" style="flex:1;padding:8px 10px;border:2px solid #e2e8f0;border-radius:8px;font-size:0.88rem;">
-            <button class="btn btn-primary" style="padding:8px 16px;font-size:0.88rem;white-space:nowrap;" onclick="lookupVakarosEvent()">Look Up Event</button>
-          </div>
-          <div id="vak-event-status" style="margin-top:6px;font-size:0.82rem;"></div>
-        </div>
-
-        <!-- Step 3: Division/Race selector (hidden until event loaded) -->
-        <div id="vak-event-results" style="display:none;background:#ecfdf5;border:1px solid #86efac;border-radius:10px;padding:14px;margin-bottom:14px;">
-          <div style="font-weight:700;color:#059669;font-size:0.9rem;margin-bottom:10px;">&#9989; Event Loaded</div>
-          <div style="margin-bottom:10px;">
-            <label style="font-weight:600;color:#333;font-size:0.85rem;display:block;margin-bottom:4px;">Division / Race</label>
-            <select id="vak-division-select" style="width:100%;padding:8px 10px;border:2px solid #e2e8f0;border-radius:8px;font-size:0.88rem;" onchange="updateVakarosTimeRange()"></select>
-          </div>
-          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
-            <div style="flex:1;min-width:140px;">
-              <label style="font-weight:600;color:#333;font-size:0.82rem;display:block;margin-bottom:3px;">After (start)</label>
-              <input type="text" id="vak-after" readonly style="width:100%;padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:0.82rem;background:#f8fafc;color:#555;">
-            </div>
-            <div style="flex:1;min-width:140px;">
-              <label style="font-weight:600;color:#333;font-size:0.82rem;display:block;margin-bottom:3px;">Before (end)</label>
-              <input type="text" id="vak-before" readonly style="width:100%;padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:0.82rem;background:#f8fafc;color:#555;">
-            </div>
-          </div>
-          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-            <button class="btn btn-primary" style="padding:10px 24px;font-size:0.95rem;font-weight:700;" onclick="importVakarosEvent()">&#128229; Import Telemetry</button>
-            <a id="vak-live-link" href="#" target="_blank" style="color:#1a6fb5;font-weight:600;font-size:0.9rem;text-decoration:none;">&#9881;&#65039; Watch Live &rarr;</a>
-          </div>
-          <div id="vak-import-status" style="margin-top:8px;font-size:0.85rem;"></div>
-        </div>
-      </div>
 
       <div class="form-card wide" style="margin-top:12px;margin-bottom:16px;">
         <div style="background:#f0f7ff;border:1px solid #d0e2f7;border-radius:12px;padding:16px;margin-bottom:16px;">
