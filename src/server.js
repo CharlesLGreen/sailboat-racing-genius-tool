@@ -1193,10 +1193,7 @@ app.get("/dashboard", requireAuth, (req, res) => {
 app.get("/log", requireAuth, (req, res) => {
   const userCheck = db.prepare("SELECT wire_size_default, data_sharing FROM users WHERE id = ?").get(req.session.user.id);
   const lang = getLang(req);
-  if (!userCheck.data_sharing) {
-    return res.send(renderPage(dataSharingChoicePage(lang, '/log'), req.session.user, lang));
-  }
-  res.send(renderPage(logFormPage(null, null, userCheck.wire_size_default, lang), req.session.user, lang));
+  res.send(renderPage(logFormPage(null, null, userCheck.wire_size_default, lang, userCheck.data_sharing), req.session.user, lang));
 });
 
 app.get("/quick-log", requireAuth, (req, res) => {
@@ -1228,9 +1225,9 @@ app.post("/quick-log", requireAuth, (req, res) => {
 app.get("/edit/:id", requireAuth, (req, res) => {
   const log = db.prepare("SELECT * FROM race_logs WHERE id = ? AND user_id = ?").get(req.params.id, req.session.user.id);
   if (!log) return res.redirect("/dashboard");
-  const userRow2 = db.prepare("SELECT wire_size_default FROM users WHERE id = ?").get(req.session.user.id);
+  const userRow2 = db.prepare("SELECT wire_size_default, data_sharing FROM users WHERE id = ?").get(req.session.user.id);
   const lang = getLang(req);
-  res.send(renderPage(logFormPage(log, null, userRow2 && userRow2.wire_size_default, lang), req.session.user, lang));
+  res.send(renderPage(logFormPage(log, null, userRow2 && userRow2.wire_size_default, lang, userRow2 && userRow2.data_sharing), req.session.user, lang));
 });
 
 app.get("/sailor/:username", (req, res) => {
@@ -1453,6 +1450,11 @@ app.post("/data-sharing", requireAuth, (req, res) => {
   db.prepare("UPDATE users SET data_sharing = ? WHERE id = ?").run(choice, req.session.user.id);
   req.session.user.data_sharing = choice;
 
+  // JSON response for inline saves from log form
+  if (req.headers['accept'] === 'application/json' || req.headers['content-type'] === 'application/json') {
+    return res.json({ ok: true, choice });
+  }
+
   // Redirect to the page they were trying to access, or profile
   const next = req.body.next;
   if (next && (next === '/log' || next === '/quick-log')) {
@@ -1465,7 +1467,10 @@ app.post("/data-sharing", requireAuth, (req, res) => {
 
 app.post("/log", requireAuth, (req, res) => {
   const { race_date, race_name, location, wind_speed, wind_direction, sea_state, temperature, current_tide, finish_position, fleet_size, performance_rating, boat_number, crew_name, skipper_weight, crew_weight, main_maker, jib_maker, jib_used, mainsail_used, main_condition, jib_condition, mast_rake, shroud_tension, shroud_turns, wire_size, wire_size_save_default, jib_lead, jib_cloth_tension, jib_height, jib_outboard_lead, cunningham, outhaul, vang, spreader_length, spreader_sweep, centerboard_position, traveler_position, augie_equalizer, mast_wiggle, water_type, sail_settings_notes, notes } = req.body;
-  if (!race_date || !race_name) return res.send(renderPage(logFormPage(req.body, "Race date and name are required.", null, getLang(req)), req.session.user, getLang(req)));
+  if (!race_date || !race_name) {
+    const dsRow = db.prepare("SELECT data_sharing FROM users WHERE id = ?").get(req.session.user.id);
+    return res.send(renderPage(logFormPage(req.body, "Race date and name are required.", null, getLang(req), dsRow && dsRow.data_sharing), req.session.user, getLang(req)));
+  }
 
   // Save wire size as user default if checkbox checked
   if (wire_size_save_default && wire_size) {
@@ -7428,16 +7433,71 @@ function quickLogPage(data, error, lang) {
   </script>`;
 }
 
-function logFormPage(data, error, userWireDefault, lang) {
+function logFormPage(data, error, userWireDefault, lang, dataSharing) {
   userWireDefault = userWireDefault || '';
   lang = lang || 'en';
   const L = (k) => t(k, lang);
   const isEdit = data && data.id;
   const d = data || {};
   const dateVal = d.race_date || "";
+  const dsVal = dataSharing || '';
   return `<div class="container">
     <h2>${isEdit ? L('editRaceLog') : L('logARace')}</h2>
     ${error ? `<div class="alert alert-error">${escapeHtml(error)}</div>` : ""}
+
+    <!-- Data Sharing Preference Card -->
+    <div id="ds-card" style="margin-bottom:20px;padding:16px 20px;border-radius:12px;border:2px solid ${dsVal === 'share' ? '#059669' : dsVal === 'private' ? '#0b3d6e' : '#e2e8f0'};background:${dsVal === 'share' ? '#ecfdf5' : dsVal === 'private' ? '#eff6ff' : '#f8fafc'};">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <div style="font-size:0.85rem;color:#555;font-weight:600;">Data Sharing</div>
+        <div style="display:flex;gap:8px;">
+          <button type="button" id="ds-share-btn" onclick="setDataSharing('share')" style="padding:8px 16px;border-radius:8px;font-size:0.85rem;font-weight:700;cursor:pointer;transition:all 0.2s;border:2px solid ${dsVal === 'share' ? '#059669' : '#d1d5db'};background:${dsVal === 'share' ? '#059669' : '#fff'};color:${dsVal === 'share' ? '#fff' : '#6b7280'};">&#127760; Share my data</button>
+          <button type="button" id="ds-private-btn" onclick="setDataSharing('private')" style="padding:8px 16px;border-radius:8px;font-size:0.85rem;font-weight:700;cursor:pointer;transition:all 0.2s;border:2px solid ${dsVal === 'private' ? '#0b3d6e' : '#d1d5db'};background:${dsVal === 'private' ? '#0b3d6e' : '#fff'};color:${dsVal === 'private' ? '#fff' : '#6b7280'};">&#128274; Keep Private</button>
+        </div>
+      </div>
+      <div id="ds-status" style="margin-top:8px;font-size:0.78rem;color:#64748b;">${dsVal === 'share' ? 'Your races appear in Race Feed and fleet-wide insights.' : dsVal === 'private' ? 'Your data stays private — only you can see it.' : 'Choose how your race data is shared before logging.'}</div>
+    </div>
+    <script>
+    function setDataSharing(choice) {
+      fetch('/data-sharing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+        body: 'data_sharing=' + encodeURIComponent(choice)
+      }).then(function(r) { return r.json(); }).then(function(d) {
+        if (!d.ok) return;
+        var card = document.getElementById('ds-card');
+        var shareBtn = document.getElementById('ds-share-btn');
+        var privBtn = document.getElementById('ds-private-btn');
+        var status = document.getElementById('ds-status');
+        // Also update nav badge
+        var navBadge = document.querySelector('.ds-badge');
+        if (choice === 'share') {
+          card.style.borderColor = '#059669'; card.style.background = '#ecfdf5';
+          shareBtn.style.borderColor = '#059669'; shareBtn.style.background = '#059669'; shareBtn.style.color = '#fff';
+          privBtn.style.borderColor = '#d1d5db'; privBtn.style.background = '#fff'; privBtn.style.color = '#6b7280';
+          status.textContent = 'Your races appear in Race Feed and fleet-wide insights.';
+          if (navBadge) { navBadge.className = 'ds-badge ds-share'; navBadge.innerHTML = '&#127760; Sharing'; }
+        } else {
+          card.style.borderColor = '#0b3d6e'; card.style.background = '#eff6ff';
+          privBtn.style.borderColor = '#0b3d6e'; privBtn.style.background = '#0b3d6e'; privBtn.style.color = '#fff';
+          shareBtn.style.borderColor = '#d1d5db'; shareBtn.style.background = '#fff'; shareBtn.style.color = '#6b7280';
+          status.textContent = 'Your data stays private — only you can see it.';
+          if (navBadge) { navBadge.className = 'ds-badge ds-private'; navBadge.innerHTML = '&#128274; Private'; }
+        }
+        // If no badge existed yet (first time choosing), create one
+        if (!navBadge) {
+          var userBadge = document.querySelector('.user-badge');
+          if (userBadge) {
+            var a = document.createElement('a');
+            a.href = '/profile';
+            a.className = 'ds-badge ' + (choice === 'share' ? 'ds-share' : 'ds-private');
+            a.innerHTML = choice === 'share' ? '&#127760; Sharing' : '&#128274; Private';
+            userBadge.insertAdjacentElement('afterend', a);
+          }
+        }
+      });
+    }
+    </script>
+
     <div class="form-card wide">
       <form method="POST" action="${isEdit ? "/edit/" + d.id : "/log"}">
         <div class="form-grid">
