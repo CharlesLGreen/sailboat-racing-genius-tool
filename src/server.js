@@ -1282,7 +1282,7 @@ app.get("/quick-log", requireAuth, (req, res) => {
     return res.send(renderPage(dataSharingChoicePage(lang, '/quick-log'), req.session.user, lang));
   }
   const userBoats = getUserBoats(req.session.user.id);
-  res.send(renderPage(quickLogPage(null, null, lang, userCheck.last_boat_number, userBoats), req.session.user, lang));
+  res.send(renderPage(quickLogPage(null, null, lang, userCheck.last_boat_number, userBoats, userCheck.data_sharing), req.session.user, lang));
 });
 
 app.post("/quick-log", requireAuth, (req, res) => {
@@ -1290,7 +1290,10 @@ app.post("/quick-log", requireAuth, (req, res) => {
   const lang = getLang(req);
   const isPractice = entry_mode === 'practice';
   const effectiveName = isPractice ? (race_name || 'Practice Session') : race_name;
-  if (!race_date || !effectiveName) return res.send(renderPage(quickLogPage(req.body, "Race date and event name are required.", lang, null, getUserBoats(req.session.user.id)), req.session.user, lang));
+  if (!race_date || !effectiveName) {
+    const dsRow = db.prepare("SELECT data_sharing FROM users WHERE id = ?").get(req.session.user.id);
+    return res.send(renderPage(quickLogPage(req.body, "Race date and event name are required.", lang, null, getUserBoats(req.session.user.id), dsRow && dsRow.data_sharing), req.session.user, lang));
+  }
 
   const fullNotes = isPractice
     ? [session_focus ? 'Focus: ' + session_focus : '', wind_speed ? 'Wind: ' + wind_speed : '', notes || ''].filter(Boolean).join('\n')
@@ -7387,14 +7390,16 @@ function coachingPage(raceLogs, uploads, pastReports, highlightUploadId, error, 
   </script>`;
 }
 
-function quickLogPage(data, error, lang, lastBoatNumber, userBoats) {
+function quickLogPage(data, error, lang, lastBoatNumber, userBoats, dataSharing) {
   lang = lang || 'en';
+  const L = (k) => t(k, lang);
   const d = data || {};
   const today = new Date().toISOString().slice(0, 10);
   const dateVal = d.race_date || today;
   const donQActive = today >= '2026-04-05' && today <= '2026-04-07';
   const defaultRaceName = d.race_name || (donQActive ? 'Don Q Regatta' : '');
   const isPractice = d.entry_mode === 'practice';
+  const dsVal = dataSharing || '';
   return `<div class="quick-race-container">
     <div class="quick-race-header">
       <h2>&#9889; Quick Entry</h2>
@@ -7408,6 +7413,21 @@ function quickLogPage(data, error, lang, lastBoatNumber, userBoats) {
         <div class="quick-mode-toggle">
           <button type="button" id="mode-race" class="quick-mode-btn${!isPractice ? ' active-race' : ''}" onclick="setMode('race')">&#127937; Race</button>
           <button type="button" id="mode-practice" class="quick-mode-btn${isPractice ? ' active-practice' : ''}" onclick="setMode('practice')">&#9973; Practice</button>
+        </div>
+
+        <!-- Data Sharing Preference Card -->
+        <div id="ds-card" style="margin:12px 0 16px;padding:14px 16px;border-radius:10px;border:2px solid ${dsVal === 'share' ? '#059669' : dsVal === 'private' ? '#0b3d6e' : '#e2e8f0'};background:${dsVal === 'share' ? '#ecfdf5' : dsVal === 'private' ? '#eff6ff' : '#f8fafc'};">
+          <div style="font-size:0.82rem;color:#555;font-weight:600;margin-bottom:10px;">${L('dataSharing')}</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div style="display:flex;flex-direction:column;gap:5px;">
+              <button type="button" id="ds-share-btn" onclick="setDataSharing('share')" style="padding:8px 12px;border-radius:8px;font-size:0.82rem;font-weight:700;cursor:pointer;transition:all 0.2s;border:2px solid ${dsVal === 'share' ? '#059669' : '#d1d5db'};background:${dsVal === 'share' ? '#059669' : '#fff'};color:${dsVal === 'share' ? '#fff' : '#6b7280'};width:100%;">&#127760; ${L('dsShareBtn')}</button>
+              <div id="ds-share-desc" style="font-size:0.74rem;line-height:1.4;color:${dsVal === 'share' ? '#065f46' : '#94a3b8'};padding:0 2px;">${L('dsShareDesc')}</div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:5px;">
+              <button type="button" id="ds-private-btn" onclick="setDataSharing('private')" style="padding:8px 12px;border-radius:8px;font-size:0.82rem;font-weight:700;cursor:pointer;transition:all 0.2s;border:2px solid ${dsVal === 'private' ? '#0b3d6e' : '#d1d5db'};background:${dsVal === 'private' ? '#0b3d6e' : '#fff'};color:${dsVal === 'private' ? '#fff' : '#6b7280'};width:100%;">&#128274; ${L('dsPrivateBtn')}</button>
+              <div id="ds-private-desc" style="font-size:0.74rem;line-height:1.4;color:${dsVal === 'private' ? '#1e3a5f' : '#94a3b8'};padding:0 2px;">${L('dsPrivateDesc')}</div>
+            </div>
+          </div>
         </div>
 
         <div class="quick-race-field">
@@ -7498,6 +7518,31 @@ function quickLogPage(data, error, lang, lastBoatNumber, userBoats) {
     </div>
   </div>
   <script>
+  function setDataSharing(choice) {
+    fetch('/data-sharing', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+      body: 'data_sharing=' + encodeURIComponent(choice)
+    }).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d.ok) return;
+      var card = document.getElementById('ds-card');
+      var shareBtn = document.getElementById('ds-share-btn');
+      var privBtn = document.getElementById('ds-private-btn');
+      var shareDesc = document.getElementById('ds-share-desc');
+      var privDesc = document.getElementById('ds-private-desc');
+      if (choice === 'share') {
+        card.style.borderColor = '#059669'; card.style.background = '#ecfdf5';
+        shareBtn.style.borderColor = '#059669'; shareBtn.style.background = '#059669'; shareBtn.style.color = '#fff';
+        privBtn.style.borderColor = '#d1d5db'; privBtn.style.background = '#fff'; privBtn.style.color = '#6b7280';
+        shareDesc.style.color = '#065f46'; privDesc.style.color = '#94a3b8';
+      } else {
+        card.style.borderColor = '#0b3d6e'; card.style.background = '#eff6ff';
+        privBtn.style.borderColor = '#0b3d6e'; privBtn.style.background = '#0b3d6e'; privBtn.style.color = '#fff';
+        shareBtn.style.borderColor = '#d1d5db'; shareBtn.style.background = '#fff'; shareBtn.style.color = '#6b7280';
+        privDesc.style.color = '#1e3a5f'; shareDesc.style.color = '#94a3b8';
+      }
+    });
+  }
   function setMode(mode) {
     var modeInput = document.getElementById('entry-mode');
     var raceBtn = document.getElementById('mode-race');
