@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e ':*)",
+      "Bash(python -c \"from PIL import Image; img = Image.open\\('hero_current.jpg'\\); print\\(img.size, img.mode\\)\")",
+      "Bash(python)",
+      "Bash(rm:*)",
+      "Bash(railway up:*)",
+      "Bash(rm -f hero_current.jpg hero_fixed.jpg)"
+    ]
+  }
+}
