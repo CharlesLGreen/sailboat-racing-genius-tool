@@ -156,7 +156,21 @@ const translations = {
     noRegatChecked: "You haven't marked any upcoming regattas yet. Check the boxes on events you plan to attend!",
     checkBoxToMark: "Check the box to mark regattas you're attending.",
     loginToTrackRegattas: "Log in to track which regattas you're attending.",
-    select: 'Select'
+    select: 'Select',
+    // Data Sharing card
+    dataSharing: 'Data Sharing',
+    dsChoose: 'Choose how your race data is shared before logging.',
+    dsShareBtn: 'Share my data',
+    dsPrivateBtn: 'Keep Private',
+    dsShareDesc: 'Your races appear in the Race Feed and contribute to fleet-wide coaching insights. You benefit from aggregated data from all Snipeovation sailors.',
+    dsPrivateDesc: 'Your data is yours alone — not visible in Race Feed and not used in fleet analytics. Your coaching uses only your personal history.',
+    dsOneQuickThing: 'One quick thing first...',
+    dsHowUsed: 'How would you like your data used within the Snipeovation community?',
+    dsShareChoiceDesc: 'Contribute to Race Feed and fleet-wide aggregated insights. I benefit from the collective knowledge of all Snipeovation sailors.',
+    dsPrivateChoiceDesc: 'My data is for my use only. I won\'t contribute to or receive fleet-wide aggregated coaching insights.',
+    dsContinue: 'Continue',
+    dsChangeAnytime: 'You can change this anytime in',
+    dsProfileSettings: 'Profile settings'
   },
   es: {
     home: 'Inicio', raceFeed: 'Carreras', myLogs: 'Mis Registros', logRace: '+ Registrar', perfMetrics: 'Rendimiento',
@@ -284,7 +298,20 @@ const translations = {
     noRegatChecked: '¡No ha marcado regatas próximas! Marque las casillas de los eventos que planea asistir.',
     checkBoxToMark: 'Marque la casilla para indicar las regatas a las que asistirá.',
     loginToTrackRegattas: 'Inicie sesión para rastrear a qué regatas asistirá.',
-    select: 'Seleccionar'
+    select: 'Seleccionar',
+    dataSharing: 'Compartir Datos',
+    dsChoose: 'Elija cómo se comparten sus datos de regata antes de registrar.',
+    dsShareBtn: 'Compartir mis datos',
+    dsPrivateBtn: 'Mantener Privado',
+    dsShareDesc: 'Sus regatas aparecen en el Feed de Regatas y contribuyen a análisis de flota. Usted se beneficia de los datos agregados de todos los navegantes de Snipeovation.',
+    dsPrivateDesc: 'Sus datos son solo suyos — no visibles en el Feed de Regatas ni usados en análisis de flota. Su coaching usa solo su historial personal.',
+    dsOneQuickThing: 'Una cosa rápida primero...',
+    dsHowUsed: '¿Cómo le gustaría que se usen sus datos en la comunidad Snipeovation?',
+    dsShareChoiceDesc: 'Contribuir al Feed de Regatas y análisis agregados de flota. Me beneficio del conocimiento colectivo de todos los navegantes de Snipeovation.',
+    dsPrivateChoiceDesc: 'Mis datos son solo para mi uso. No contribuiré ni recibiré análisis agregados de coaching de flota.',
+    dsContinue: 'Continuar',
+    dsChangeAnytime: 'Puede cambiar esto en cualquier momento en',
+    dsProfileSettings: 'Configuración de Perfil'
   },
   it: {
     home: 'Home', raceFeed: 'Regate', myLogs: 'I Miei Log', logRace: '+ Registra', perfMetrics: 'Prestazioni',
@@ -412,7 +439,20 @@ const translations = {
     noRegatChecked: 'Non hai ancora selezionato regate! Spunta le caselle degli eventi a cui intendi partecipare.',
     checkBoxToMark: 'Spunta la casella per indicare le regate a cui parteciperai.',
     loginToTrackRegattas: 'Accedi per tracciare a quali regate parteciperai.',
-    select: 'Seleziona'
+    select: 'Seleziona',
+    dataSharing: 'Condivisione Dati',
+    dsChoose: 'Scegli come condividere i dati delle tue regate prima di registrare.',
+    dsShareBtn: 'Condividi i miei dati',
+    dsPrivateBtn: 'Mantieni Privato',
+    dsShareDesc: 'Le tue regate appaiono nel Feed Regate e contribuiscono alle analisi della flotta. Benefici dei dati aggregati di tutti i velisti Snipeovation.',
+    dsPrivateDesc: 'I tuoi dati sono solo tuoi — non visibili nel Feed Regate e non usati nelle analisi della flotta. Il tuo coaching usa solo la tua storia personale.',
+    dsOneQuickThing: 'Una cosa veloce prima...',
+    dsHowUsed: 'Come vorresti che i tuoi dati vengano usati nella comunità Snipeovation?',
+    dsShareChoiceDesc: 'Contribuisci al Feed Regate e alle analisi aggregate della flotta. Beneficio della conoscenza collettiva di tutti i velisti Snipeovation.',
+    dsPrivateChoiceDesc: 'I miei dati sono solo per il mio uso. Non contribuirò né riceverò analisi aggregate di coaching della flotta.',
+    dsContinue: 'Continua',
+    dsChangeAnytime: 'Puoi cambiare questo in qualsiasi momento in',
+    dsProfileSettings: 'Impostazioni Profilo'
   },
   pt: {
     home: 'Início', raceFeed: 'Regatas', myLogs: 'Meus Registros', logRace: '+ Registrar', perfMetrics: 'Desempenho',
@@ -540,7 +580,20 @@ const translations = {
     noRegatChecked: 'Você não marcou regatas próximas! Marque as caixas dos eventos que planeja participar.',
     checkBoxToMark: 'Marque a caixa para indicar as regatas que você vai participar.',
     loginToTrackRegattas: 'Faça login para rastrear em quais regatas você vai participar.',
-    select: 'Selecionar'
+    select: 'Selecionar',
+    dataSharing: 'Compartilhamento de Dados',
+    dsChoose: 'Escolha como seus dados de regata são compartilhados antes de registrar.',
+    dsShareBtn: 'Compartilhar meus dados',
+    dsPrivateBtn: 'Manter Privado',
+    dsShareDesc: 'Suas regatas aparecem no Feed de Regatas e contribuem para análises da frota. Você se beneficia dos dados agregados de todos os velejadores do Snipeovation.',
+    dsPrivateDesc: 'Seus dados são somente seus — não visíveis no Feed de Regatas e não usados em análises da frota. Seu coaching usa apenas seu histórico pessoal.',
+    dsOneQuickThing: 'Uma coisa rápida primeiro...',
+    dsHowUsed: 'Como você gostaria que seus dados fossem usados na comunidade Snipeovation?',
+    dsShareChoiceDesc: 'Contribuir para o Feed de Regatas e análises agregadas da frota. Me beneficio do conhecimento coletivo de todos os velejadores do Snipeovation.',
+    dsPrivateChoiceDesc: 'Meus dados são apenas para meu uso. Não contribuirei nem receberei análises agregadas de coaching da frota.',
+    dsContinue: 'Continuar',
+    dsChangeAnytime: 'Você pode mudar isso a qualquer momento em',
+    dsProfileSettings: 'Configurações do Perfil'
   }
 };
 
@@ -7449,15 +7502,15 @@ function logFormPage(data, error, userWireDefault, lang, dataSharing) {
 
     <!-- Data Sharing Preference Card -->
     <div id="ds-card" style="margin-bottom:20px;padding:16px 20px;border-radius:12px;border:2px solid ${dsVal === 'share' ? '#059669' : dsVal === 'private' ? '#0b3d6e' : '#e2e8f0'};background:${dsVal === 'share' ? '#ecfdf5' : dsVal === 'private' ? '#eff6ff' : '#f8fafc'};">
-      <div style="font-size:0.85rem;color:#555;font-weight:600;margin-bottom:12px;">Data Sharing</div>
+      <div style="font-size:0.85rem;color:#555;font-weight:600;margin-bottom:12px;">${L('dataSharing')}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
         <div style="display:flex;flex-direction:column;gap:6px;">
-          <button type="button" id="ds-share-btn" onclick="setDataSharing('share')" style="padding:10px 16px;border-radius:8px;font-size:0.85rem;font-weight:700;cursor:pointer;transition:all 0.2s;border:2px solid ${dsVal === 'share' ? '#059669' : '#d1d5db'};background:${dsVal === 'share' ? '#059669' : '#fff'};color:${dsVal === 'share' ? '#fff' : '#6b7280'};width:100%;">&#127760; Share my data</button>
-          <div id="ds-share-desc" style="font-size:0.78rem;line-height:1.4;color:${dsVal === 'share' ? '#065f46' : '#94a3b8'};padding:0 2px;">Your races appear in the Race Feed and contribute to fleet-wide coaching insights. You benefit from aggregated data from all Snipeovation sailors.</div>
+          <button type="button" id="ds-share-btn" onclick="setDataSharing('share')" style="padding:10px 16px;border-radius:8px;font-size:0.85rem;font-weight:700;cursor:pointer;transition:all 0.2s;border:2px solid ${dsVal === 'share' ? '#059669' : '#d1d5db'};background:${dsVal === 'share' ? '#059669' : '#fff'};color:${dsVal === 'share' ? '#fff' : '#6b7280'};width:100%;">&#127760; ${L('dsShareBtn')}</button>
+          <div id="ds-share-desc" style="font-size:0.78rem;line-height:1.4;color:${dsVal === 'share' ? '#065f46' : '#94a3b8'};padding:0 2px;">${L('dsShareDesc')}</div>
         </div>
         <div style="display:flex;flex-direction:column;gap:6px;">
-          <button type="button" id="ds-private-btn" onclick="setDataSharing('private')" style="padding:10px 16px;border-radius:8px;font-size:0.85rem;font-weight:700;cursor:pointer;transition:all 0.2s;border:2px solid ${dsVal === 'private' ? '#0b3d6e' : '#d1d5db'};background:${dsVal === 'private' ? '#0b3d6e' : '#fff'};color:${dsVal === 'private' ? '#fff' : '#6b7280'};width:100%;">&#128274; Keep Private</button>
-          <div id="ds-private-desc" style="font-size:0.78rem;line-height:1.4;color:${dsVal === 'private' ? '#1e3a5f' : '#94a3b8'};padding:0 2px;">Your data is yours alone — not visible in Race Feed and not used in fleet analytics. Your coaching uses only your personal history.</div>
+          <button type="button" id="ds-private-btn" onclick="setDataSharing('private')" style="padding:10px 16px;border-radius:8px;font-size:0.85rem;font-weight:700;cursor:pointer;transition:all 0.2s;border:2px solid ${dsVal === 'private' ? '#0b3d6e' : '#d1d5db'};background:${dsVal === 'private' ? '#0b3d6e' : '#fff'};color:${dsVal === 'private' ? '#fff' : '#6b7280'};width:100%;">&#128274; ${L('dsPrivateBtn')}</button>
+          <div id="ds-private-desc" style="font-size:0.78rem;line-height:1.4;color:${dsVal === 'private' ? '#1e3a5f' : '#94a3b8'};padding:0 2px;">${L('dsPrivateDesc')}</div>
         </div>
       </div>
     </div>
@@ -8059,32 +8112,33 @@ function registerPage(error) {
 }
 
 function dataSharingChoicePage(lang, nextUrl) {
+  const L = (k) => t(k, lang);
   return `<div class="container" style="max-width:560px;">
     <div class="form-card wide" style="padding:32px 24px;text-align:center;">
-      <h2 style="color:#0b3d6e;margin:0 0 8px;font-size:1.4rem;">One quick thing first...</h2>
-      <p style="color:#555;font-size:0.95rem;margin-bottom:24px;">How would you like your data used within the Snipeovation community?</p>
+      <h2 style="color:#0b3d6e;margin:0 0 8px;font-size:1.4rem;">${L('dsOneQuickThing')}</h2>
+      <p style="color:#555;font-size:0.95rem;margin-bottom:24px;">${L('dsHowUsed')}</p>
 
       <form method="POST" action="/data-sharing">
         <input type="hidden" name="next" value="${escapeHtml(nextUrl || '')}">
         <label style="display:flex;align-items:flex-start;gap:12px;padding:18px 16px;border:2px solid #e2e8f0;border-radius:12px;margin-bottom:12px;cursor:pointer;text-align:left;transition:all 0.2s;" onmouseover="this.style.borderColor='#059669';this.style.background='#f0fdf4'" onmouseout="this.style.borderColor=this.querySelector('input').checked?'#059669':'#e2e8f0';this.style.background=this.querySelector('input').checked?'#ecfdf5':'#fff'">
           <input type="radio" name="data_sharing" value="share" style="margin-top:4px;accent-color:#059669;width:18px;height:18px;flex-shrink:0;">
           <div>
-            <div style="font-weight:700;color:#059669;font-size:1.05rem;">&#127760; Share my data</div>
-            <div style="color:#555;font-size:0.88rem;margin-top:4px;line-height:1.5;">Contribute to Race Feed and fleet-wide aggregated insights. I benefit from the collective knowledge of all Snipeovation sailors.</div>
+            <div style="font-weight:700;color:#059669;font-size:1.05rem;">&#127760; ${L('dsShareBtn')}</div>
+            <div style="color:#555;font-size:0.88rem;margin-top:4px;line-height:1.5;">${L('dsShareChoiceDesc')}</div>
           </div>
         </label>
 
         <label style="display:flex;align-items:flex-start;gap:12px;padding:18px 16px;border:2px solid #e2e8f0;border-radius:12px;margin-bottom:20px;cursor:pointer;text-align:left;transition:all 0.2s;" onmouseover="this.style.borderColor='#0b3d6e';this.style.background='#f0f7ff'" onmouseout="this.style.borderColor=this.querySelector('input').checked?'#0b3d6e':'#e2e8f0';this.style.background=this.querySelector('input').checked?'#f0f7ff':'#fff'">
           <input type="radio" name="data_sharing" value="private" style="margin-top:4px;accent-color:#0b3d6e;width:18px;height:18px;flex-shrink:0;">
           <div>
-            <div style="font-weight:700;color:#0b3d6e;font-size:1.05rem;">&#128274; Keep private</div>
-            <div style="color:#555;font-size:0.88rem;margin-top:4px;line-height:1.5;">My data is for my use only. I won't contribute to or receive fleet-wide aggregated coaching insights.</div>
+            <div style="font-weight:700;color:#0b3d6e;font-size:1.05rem;">&#128274; ${L('dsPrivateBtn')}</div>
+            <div style="color:#555;font-size:0.88rem;margin-top:4px;line-height:1.5;">${L('dsPrivateChoiceDesc')}</div>
           </div>
         </label>
 
-        <button type="submit" class="btn btn-primary" style="width:100%;padding:14px;font-size:1.05rem;" id="ds-save-btn" disabled>Continue</button>
+        <button type="submit" class="btn btn-primary" style="width:100%;padding:14px;font-size:1.05rem;" id="ds-save-btn" disabled>${L('dsContinue')}</button>
       </form>
-      <p style="color:#94a3b8;font-size:0.8rem;margin-top:14px;">You can change this anytime in <a href="/profile" style="color:#1a6fb5;font-weight:600;">Profile settings</a>.</p>
+      <p style="color:#94a3b8;font-size:0.8rem;margin-top:14px;">${L('dsChangeAnytime')} <a href="/profile" style="color:#1a6fb5;font-weight:600;">${L('dsProfileSettings')}</a>.</p>
     </div>
   </div>
   <script>
