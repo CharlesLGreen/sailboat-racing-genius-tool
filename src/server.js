@@ -955,6 +955,12 @@ try {
   }
 } catch(e) {}
 
+// One-time: set data_sharing='share' for users who have race logs but never chose
+try {
+  const updated = db.prepare("UPDATE users SET data_sharing = 'share' WHERE data_sharing IS NULL AND id IN (SELECT DISTINCT user_id FROM race_logs)").run();
+  if (updated.changes > 0) console.log("Auto-shared " + updated.changes + " user(s) with existing race logs");
+} catch(e) {}
+
 console.log("Database initialized successfully");
 
 function getUserBoats(userId) {
@@ -6830,9 +6836,9 @@ function renderPage(content, user, lang, showHero) {
       <a href="/dashboard">${L('myLogs')}</a>
       <a href="/quick-log" class="btn-quick-entry">&#9889; Quick</a>
       <a href="/log" class="btn-accent">${L('logRace')}</a>
+      <a href="/magic">${L('magic')}</a>
       <a href="/performance">${L('perfMetrics')}</a>
       <a href="/coaching" style="color:#a3f0d0;">&#127919; Coaching + Vakaros</a>
-      <a href="/magic">${L('magic')}</a>
       <a href="/tuning-guides">${L('tuningGuides')}</a>
       <a href="/racing-rules">${L('racingRules')}</a>
       <a href="/snipe-rules">${L('snipeRules')}</a>
@@ -6842,7 +6848,6 @@ function renderPage(content, user, lang, showHero) {
       <a href="/tasks">${L('tasks')}</a>
       <a href="/profile">${L('profile')}</a>
       <span class="user-badge">${lang === 'es' ? '🇪🇸' : lang === 'it' ? '🇮🇹' : lang === 'pt' ? '🇧🇷' : '🇺🇸🇬🇧'} ${escapeHtml(user.display_name || user.username)}</span>
-      ${user.data_sharing ? `<a href="/profile" class="ds-badge ${user.data_sharing === 'share' ? 'ds-share' : 'ds-private'}">${user.data_sharing === 'share' ? '&#127760; Sharing' : '&#128274; Private'}</a>` : ''}
       <a href="/logout">${L('logout')}</a>
     ` : `
       <a href="/">🏠 ${L('home')}</a>
@@ -7638,31 +7643,16 @@ function logFormPage(data, error, userWireDefault, lang, dataSharing, lastBoatNu
         var privBtn = document.getElementById('ds-private-btn');
         var shareDesc = document.getElementById('ds-share-desc');
         var privDesc = document.getElementById('ds-private-desc');
-        // Also update nav badge
-        var navBadge = document.querySelector('.ds-badge');
         if (choice === 'share') {
           card.style.borderColor = '#059669'; card.style.background = '#ecfdf5';
           shareBtn.style.borderColor = '#059669'; shareBtn.style.background = '#059669'; shareBtn.style.color = '#fff';
           privBtn.style.borderColor = '#d1d5db'; privBtn.style.background = '#fff'; privBtn.style.color = '#6b7280';
           shareDesc.style.color = '#065f46'; privDesc.style.color = '#94a3b8';
-          if (navBadge) { navBadge.className = 'ds-badge ds-share'; navBadge.innerHTML = '&#127760; Sharing'; }
         } else {
           card.style.borderColor = '#0b3d6e'; card.style.background = '#eff6ff';
           privBtn.style.borderColor = '#0b3d6e'; privBtn.style.background = '#0b3d6e'; privBtn.style.color = '#fff';
           shareBtn.style.borderColor = '#d1d5db'; shareBtn.style.background = '#fff'; shareBtn.style.color = '#6b7280';
           privDesc.style.color = '#1e3a5f'; shareDesc.style.color = '#94a3b8';
-          if (navBadge) { navBadge.className = 'ds-badge ds-private'; navBadge.innerHTML = '&#128274; Private'; }
-        }
-        // If no badge existed yet (first time choosing), create one
-        if (!navBadge) {
-          var userBadge = document.querySelector('.user-badge');
-          if (userBadge) {
-            var a = document.createElement('a');
-            a.href = '/profile';
-            a.className = 'ds-badge ' + (choice === 'share' ? 'ds-share' : 'ds-private');
-            a.innerHTML = choice === 'share' ? '&#127760; Sharing' : '&#128274; Private';
-            userBadge.insertAdjacentElement('afterend', a);
-          }
         }
       });
     }
