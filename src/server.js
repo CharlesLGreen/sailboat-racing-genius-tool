@@ -7312,6 +7312,8 @@ function quickLogPage(data, error, lang, lastBoatNumber) {
   const d = data || {};
   const today = new Date().toISOString().slice(0, 10);
   const dateVal = d.race_date || today;
+  const donQActive = today >= '2026-04-05' && today <= '2026-04-07';
+  const defaultRaceName = d.race_name || (donQActive ? 'Don Q Regatta' : '');
   const isPractice = d.entry_mode === 'practice';
   return `<div class="quick-race-container">
     <div class="quick-race-header">
@@ -7337,7 +7339,7 @@ function quickLogPage(data, error, lang, lastBoatNumber) {
           <div class="quick-race-field">
             <label>Regatta / Event</label>
             <div class="quick-voice-wrap">
-              <input type="text" name="race_name" id="race-name-input" value="${escapeHtml(d.race_name || '')}" placeholder="e.g. Midwinters Race 3" autocomplete="off">
+              <input type="text" name="race_name" id="race-name-input" value="${escapeHtml(defaultRaceName)}" placeholder="e.g. Midwinters Race 3" autocomplete="off">
               <button type="button" class="quick-mic" data-target="race-name-input" aria-label="Voice input">&#127908;</button>
             </div>
           </div>
@@ -7521,7 +7523,10 @@ function logFormPage(data, error, userWireDefault, lang, dataSharing, lastBoatNu
   const L = (k) => t(k, lang);
   const isEdit = data && data.id;
   const d = data || {};
+  const today = new Date().toISOString().slice(0, 10);
   const dateVal = d.race_date || "";
+  const donQActive = today >= '2026-04-05' && today <= '2026-04-07';
+  const defaultRaceName = d.race_name || (!isEdit && donQActive ? 'Don Q Regatta' : '');
   const dsVal = dataSharing || '';
   return `<div class="container">
     <h2>${isEdit ? L('editRaceLog') : L('logARace')}</h2>
@@ -7602,7 +7607,7 @@ function logFormPage(data, error, userWireDefault, lang, dataSharing, lastBoatNu
   </select>
 </div><div class="form-group">
             <label>${L('raceName')} *</label>
-            <input type="text" name="race_name" value="${escapeHtml(d.race_name)}" placeholder="${L('egRaceName')}" required>
+            <input type="text" name="race_name" value="${escapeHtml(defaultRaceName)}" placeholder="${L('egRaceName')}" required>
           </div>
           <div class="form-group">
             <label>${L('date')} *</label>
