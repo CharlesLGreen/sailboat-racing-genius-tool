@@ -6294,7 +6294,7 @@ function renderPage(content, user, lang, showHero) {
     .sticky-nav .user-badge { color: rgba(255,255,255,0.75); font-size: 0.8rem; padding: 10px 6px; }
     .ds-badge { font-size: 0.7rem !important; padding: 4px 8px !important; border-radius: 6px !important; font-weight: 700 !important; text-decoration: none !important; white-space: nowrap; }
     .ds-share { background: rgba(5,150,105,0.25) !important; color: #6ee7b7 !important; border: 1px solid rgba(110,231,183,0.3) !important; }
-    .ds-private { background: rgba(255,255,255,0.1) !important; color: rgba(255,255,255,0.7) !important; border: 1px solid rgba(255,255,255,0.2) !important; }
+    .ds-private { background: rgba(11,61,110,0.5) !important; color: #93c5fd !important; border: 1px solid rgba(147,197,253,0.35) !important; }
     .header-nav a {
       color: rgba(255,255,255,0.9); text-decoration: none; padding: 12px 16px;
       border-radius: 6px; font-weight: 600; font-size: 0.9rem; transition: background 0.2s;
