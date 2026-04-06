@@ -829,6 +829,18 @@ db.exec(`CREATE TABLE IF NOT EXISTS user_hull_numbers (
   UNIQUE(user_id, hull_number)
 )`);
 
+// User boats (My Boats on profile)
+db.exec(`CREATE TABLE IF NOT EXISTS user_boats (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER REFERENCES users(id),
+  sail_number TEXT NOT NULL,
+  nickname TEXT,
+  sort_order INTEGER DEFAULT 0,
+  is_default INTEGER DEFAULT 0,
+  created_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(user_id, sail_number)
+)`);
+
 // Password reset tokens
 db.exec(`CREATE TABLE IF NOT EXISTS password_resets (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -944,6 +956,10 @@ try {
 } catch(e) {}
 
 console.log("Database initialized successfully");
+
+function getUserBoats(userId) {
+  return db.prepare("SELECT * FROM user_boats WHERE user_id = ? ORDER BY sort_order ASC, id ASC").all(userId);
+}
 
 // Auth middleware
 function requireAuth(req, res, next) {
@@ -1249,7 +1265,8 @@ app.get("/log-race", (req, res) => res.redirect("/log"));
 app.get("/log", requireAuth, (req, res) => {
   const userCheck = db.prepare("SELECT wire_size_default, data_sharing, last_boat_number FROM users WHERE id = ?").get(req.session.user.id);
   const lang = getLang(req);
-  res.send(renderPage(logFormPage(null, null, userCheck.wire_size_default, lang, userCheck.data_sharing, userCheck.last_boat_number), req.session.user, lang));
+  const userBoats = getUserBoats(req.session.user.id);
+  res.send(renderPage(logFormPage(null, null, userCheck.wire_size_default, lang, userCheck.data_sharing, userCheck.last_boat_number, userBoats), req.session.user, lang));
 });
 
 app.get("/quick-log", requireAuth, (req, res) => {
@@ -1258,7 +1275,8 @@ app.get("/quick-log", requireAuth, (req, res) => {
   if (!userCheck.data_sharing) {
     return res.send(renderPage(dataSharingChoicePage(lang, '/quick-log'), req.session.user, lang));
   }
-  res.send(renderPage(quickLogPage(null, null, lang, userCheck.last_boat_number), req.session.user, lang));
+  const userBoats = getUserBoats(req.session.user.id);
+  res.send(renderPage(quickLogPage(null, null, lang, userCheck.last_boat_number, userBoats), req.session.user, lang));
 });
 
 app.post("/quick-log", requireAuth, (req, res) => {
@@ -1266,7 +1284,7 @@ app.post("/quick-log", requireAuth, (req, res) => {
   const lang = getLang(req);
   const isPractice = entry_mode === 'practice';
   const effectiveName = isPractice ? (race_name || 'Practice Session') : race_name;
-  if (!race_date || !effectiveName) return res.send(renderPage(quickLogPage(req.body, "Race date and event name are required.", lang), req.session.user, lang));
+  if (!race_date || !effectiveName) return res.send(renderPage(quickLogPage(req.body, "Race date and event name are required.", lang, null, getUserBoats(req.session.user.id)), req.session.user, lang));
 
   const fullNotes = isPractice
     ? [session_focus ? 'Focus: ' + session_focus : '', wind_speed ? 'Wind: ' + wind_speed : '', notes || ''].filter(Boolean).join('\n')
@@ -1286,7 +1304,8 @@ app.get("/edit/:id", requireAuth, (req, res) => {
   if (!log) return res.redirect("/dashboard");
   const userRow2 = db.prepare("SELECT wire_size_default, data_sharing, last_boat_number FROM users WHERE id = ?").get(req.session.user.id);
   const lang = getLang(req);
-  res.send(renderPage(logFormPage(log, null, userRow2 && userRow2.wire_size_default, lang, userRow2 && userRow2.data_sharing, userRow2 && userRow2.last_boat_number), req.session.user, lang));
+  const userBoats = getUserBoats(req.session.user.id);
+  res.send(renderPage(logFormPage(log, null, userRow2 && userRow2.wire_size_default, lang, userRow2 && userRow2.data_sharing, userRow2 && userRow2.last_boat_number, userBoats), req.session.user, lang));
 });
 
 app.get("/sailor/:username", (req, res) => {
@@ -1492,7 +1511,8 @@ app.get("/logout", (req, res) => {
 
 app.get("/profile", requireAuth, (req, res) => {
   const user = db.prepare("SELECT * FROM users WHERE id = ?").get(req.session.user.id);
-  res.send(renderPage(profilePage(user), req.session.user, getLang(req)));
+  const userBoats = getUserBoats(req.session.user.id);
+  res.send(renderPage(profilePage(user, null, userBoats), req.session.user, getLang(req)));
 });
 
 app.post("/profile", requireAuth, (req, res) => {
@@ -1500,7 +1520,8 @@ app.post("/profile", requireAuth, (req, res) => {
   db.prepare("UPDATE users SET display_name=?, boat_name=?, snipe_number=? WHERE id=?").run(display_name?.trim() || null, boat_name?.trim() || null, snipe_number?.trim() || null, req.session.user.id);
   const user = db.prepare("SELECT * FROM users WHERE id = ?").get(req.session.user.id);
   req.session.user = { id: user.id, username: user.username, email: user.email, display_name: user.display_name, boat_name: user.boat_name, snipe_number: user.snipe_number, data_sharing: user.data_sharing || null };
-  res.send(renderPage(profilePage(user, "Profile updated!"), req.session.user, getLang(req)));
+  const userBoats = getUserBoats(req.session.user.id);
+  res.send(renderPage(profilePage(user, "Profile updated!", userBoats), req.session.user, getLang(req)));
 });
 
 // --- DATA SHARING PREFERENCE ---
@@ -1528,7 +1549,7 @@ app.post("/log", requireAuth, (req, res) => {
   const { race_date, race_name, location, wind_speed, wind_direction, sea_state, temperature, current_tide, finish_position, fleet_size, performance_rating, boat_number, crew_name, skipper_weight, crew_weight, main_maker, jib_maker, jib_used, mainsail_used, main_condition, jib_condition, mast_rake, shroud_tension, shroud_turns, wire_size, wire_size_save_default, jib_lead, jib_cloth_tension, jib_height, jib_outboard_lead, cunningham, outhaul, vang, spreader_length, spreader_sweep, centerboard_position, traveler_position, augie_equalizer, mast_wiggle, water_type, sail_settings_notes, notes } = req.body;
   if (!race_date || !race_name) {
     const dsRow = db.prepare("SELECT data_sharing, last_boat_number FROM users WHERE id = ?").get(req.session.user.id);
-    return res.send(renderPage(logFormPage(req.body, "Race date and name are required.", null, getLang(req), dsRow && dsRow.data_sharing, dsRow && dsRow.last_boat_number), req.session.user, getLang(req)));
+    return res.send(renderPage(logFormPage(req.body, "Race date and name are required.", null, getLang(req), dsRow && dsRow.data_sharing, dsRow && dsRow.last_boat_number, getUserBoats(req.session.user.id)), req.session.user, getLang(req)));
   }
 
   // Save wire size as user default if checkbox checked
@@ -5302,6 +5323,60 @@ app.post("/api/hull-numbers/delete", requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+// --- MY BOATS API ---
+app.get("/api/my-boats", requireAuth, (req, res) => {
+  res.json(getUserBoats(req.session.user.id));
+});
+
+app.post("/api/my-boats/add", requireAuth, (req, res) => {
+  const { sail_number, nickname } = req.body;
+  if (!sail_number || !sail_number.trim()) return res.status(400).json({ error: 'Sail number required' });
+  const uid = req.session.user.id;
+  const existing = getUserBoats(uid);
+  const maxOrder = existing.length > 0 ? Math.max(...existing.map(b => b.sort_order)) + 1 : 0;
+  const isFirst = existing.length === 0 ? 1 : 0;
+  try {
+    db.prepare("INSERT INTO user_boats (user_id, sail_number, nickname, sort_order, is_default) VALUES (?,?,?,?,?)")
+      .run(uid, sail_number.trim(), (nickname || '').trim() || null, maxOrder, isFirst);
+    const boat = db.prepare("SELECT * FROM user_boats WHERE user_id = ? AND sail_number = ?").get(uid, sail_number.trim());
+    res.json({ ok: true, boat });
+  } catch(e) {
+    if (e.message.includes('UNIQUE')) return res.status(400).json({ error: 'Boat already exists' });
+    res.status(500).json({ error: 'Failed to add boat' });
+  }
+});
+
+app.post("/api/my-boats/:id/delete", requireAuth, (req, res) => {
+  const uid = req.session.user.id;
+  const boat = db.prepare("SELECT * FROM user_boats WHERE id = ? AND user_id = ?").get(req.params.id, uid);
+  if (!boat) return res.status(404).json({ error: 'Not found' });
+  db.prepare("DELETE FROM user_boats WHERE id = ? AND user_id = ?").run(req.params.id, uid);
+  if (boat.is_default) {
+    const first = db.prepare("SELECT id FROM user_boats WHERE user_id = ? ORDER BY sort_order ASC, id ASC LIMIT 1").get(uid);
+    if (first) db.prepare("UPDATE user_boats SET is_default = 1 WHERE id = ?").run(first.id);
+  }
+  res.json({ ok: true });
+});
+
+app.post("/api/my-boats/:id/set-default", requireAuth, (req, res) => {
+  const uid = req.session.user.id;
+  const boat = db.prepare("SELECT id FROM user_boats WHERE id = ? AND user_id = ?").get(req.params.id, uid);
+  if (!boat) return res.status(404).json({ error: 'Not found' });
+  db.prepare("UPDATE user_boats SET is_default = 0 WHERE user_id = ?").run(uid);
+  db.prepare("UPDATE user_boats SET is_default = 1 WHERE id = ?").run(req.params.id);
+  res.json({ ok: true });
+});
+
+app.post("/api/my-boats/reorder", requireAuth, (req, res) => {
+  const { order } = req.body;
+  if (!Array.isArray(order)) return res.status(400).json({ error: 'order array required' });
+  const uid = req.session.user.id;
+  const stmt = db.prepare("UPDATE user_boats SET sort_order = ? WHERE id = ? AND user_id = ?");
+  const tx = db.transaction((ids) => { ids.forEach((id, i) => stmt.run(i, id, uid)); });
+  tx(order);
+  res.json({ ok: true });
+});
+
 app.get("/tasks", requireAuth, (req, res) => {
   const lang = getLang(req);
   const L = (k) => t(k, lang);
@@ -7307,7 +7382,7 @@ function coachingPage(raceLogs, uploads, pastReports, highlightUploadId, error, 
   </script>`;
 }
 
-function quickLogPage(data, error, lang, lastBoatNumber) {
+function quickLogPage(data, error, lang, lastBoatNumber, userBoats) {
   lang = lang || 'en';
   const d = data || {};
   const today = new Date().toISOString().slice(0, 10);
@@ -7384,11 +7459,15 @@ function quickLogPage(data, error, lang, lastBoatNumber) {
         <div class="quick-race-field">
           <label>Boat Number</label>
           ${(function() {
-            const knownBoats = ['31776', '31847', '31900', '32023'];
-            const curVal = d.boat_number || lastBoatNumber || '31847';
-            const isOther = curVal && !knownBoats.includes(curVal);
+            const boats = userBoats || [];
+            const curVal = d.boat_number || lastBoatNumber || (boats.find(b => b.is_default) || boats[0] || {}).sail_number || '';
+            if (boats.length === 0) {
+              return '<input type="text" name="boat_number" value="' + escapeHtml(curVal) + '" placeholder="e.g. 31234" style="padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">';
+            }
+            const boatNums = boats.map(b => b.sail_number);
+            const isOther = curVal && !boatNums.includes(curVal);
             return '<select id="qb-select" onchange="var oi=document.getElementById(\'qb-other\');var hi=document.getElementById(\'qb-hidden\');if(this.value===\'other\'){oi.style.display=\'block\';oi.focus();hi.value=oi.value;}else{oi.style.display=\'none\';hi.value=this.value;}" style="padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">'
-              + knownBoats.map(function(b) { return '<option value="' + b + '"' + (curVal === b ? ' selected' : '') + '>' + b + '</option>'; }).join('')
+              + boats.map(function(b) { return '<option value="' + escapeHtml(b.sail_number) + '"' + (curVal === b.sail_number ? ' selected' : '') + '>' + escapeHtml(b.sail_number) + (b.nickname ? ' — ' + escapeHtml(b.nickname) : '') + '</option>'; }).join('')
               + '<option value="other"' + (isOther ? ' selected' : '') + '>Other...</option>'
               + '</select>'
               + '<input type="text" id="qb-other" placeholder="e.g. 31234" value="' + (isOther ? escapeHtml(curVal) : '') + '" oninput="document.getElementById(\'qb-hidden\').value=this.value" style="display:' + (isOther ? 'block' : 'none') + ';margin-top:6px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">'
@@ -7517,7 +7596,7 @@ function quickLogPage(data, error, lang, lastBoatNumber) {
   </script>`;
 }
 
-function logFormPage(data, error, userWireDefault, lang, dataSharing, lastBoatNumber) {
+function logFormPage(data, error, userWireDefault, lang, dataSharing, lastBoatNumber, userBoats) {
   userWireDefault = userWireDefault || '';
   lang = lang || 'en';
   const L = (k) => t(k, lang);
@@ -7620,11 +7699,15 @@ function logFormPage(data, error, userWireDefault, lang, dataSharing, lastBoatNu
           <div class="form-group">
             <label>${L('boatNumber')}</label>
             ${(function() {
-              const knownBoats = ['31776', '31847', '31900', '32023'];
-              const curVal = d.boat_number || lastBoatNumber || '31847';
-              const isOther = curVal && !knownBoats.includes(curVal);
+              const boats = userBoats || [];
+              const curVal = d.boat_number || lastBoatNumber || (boats.find(b => b.is_default) || boats[0] || {}).sail_number || '';
+              if (boats.length === 0) {
+                return '<input type="text" name="boat_number" value="' + escapeHtml(curVal) + '" placeholder="' + L('egBoatNum') + '" style="padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">';
+              }
+              const boatNums = boats.map(b => b.sail_number);
+              const isOther = curVal && !boatNums.includes(curVal);
               return '<select id="boat-number-select" onchange="var oi=document.getElementById(\'boat-number-other\');var hi=document.getElementById(\'boat-number-hidden\');if(this.value===\'other\'){oi.style.display=\'block\';oi.focus();hi.value=oi.value;}else{oi.style.display=\'none\';hi.value=this.value;}" style="padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">'
-                + knownBoats.map(function(b) { return '<option value="' + b + '"' + (curVal === b ? ' selected' : '') + '>' + b + '</option>'; }).join('')
+                + boats.map(function(b) { return '<option value="' + escapeHtml(b.sail_number) + '"' + (curVal === b.sail_number ? ' selected' : '') + '>' + escapeHtml(b.sail_number) + (b.nickname ? ' — ' + escapeHtml(b.nickname) : '') + '</option>'; }).join('')
                 + '<option value="other"' + (isOther ? ' selected' : '') + '>Other...</option>'
                 + '</select>'
                 + '<input type="text" id="boat-number-other" placeholder="' + L('egBoatNum') + '" value="' + (isOther ? escapeHtml(curVal) : '') + '" oninput="document.getElementById(\'boat-number-hidden\').value=this.value" style="display:' + (isOther ? 'block' : 'none') + ';margin-top:6px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">'
@@ -8207,8 +8290,9 @@ function dataSharingChoicePage(lang, nextUrl) {
   </script>`;
 }
 
-function profilePage(userData, success) {
+function profilePage(userData, success, userBoats) {
   const sharing = userData.data_sharing;
+  const boats = userBoats || [];
   return `<div class="container">
     <h2>My Profile <span class="sub">Update your sailor info and boat details</span></h2>
     ${success ? `<div class="alert alert-success">${escapeHtml(success)}</div>` : ""}
@@ -8233,6 +8317,137 @@ function profilePage(userData, success) {
         <strong>Email:</strong> ${escapeHtml(userData.email)}
       </div>
     </div>
+
+    <!-- My Boats -->
+    <div class="form-card" style="margin-top:24px;">
+      <h3 style="color:#0b3d6e;margin:0 0 4px;font-size:1.1rem;">My Boats</h3>
+      <p style="color:#666;font-size:0.85rem;margin-bottom:16px;">Manage your boats. The default boat is pre-selected when logging races. Drag to reorder.</p>
+      <ul id="my-boats-list" style="list-style:none;padding:0;margin:0 0 16px;">
+        ${boats.map(b => `<li data-id="${b.id}" draggable="true" style="display:flex;align-items:center;gap:8px;padding:10px 12px;margin-bottom:6px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;cursor:grab;transition:background 0.15s;">
+          <span style="cursor:grab;color:#94a3b8;font-size:1.1rem;user-select:none;" title="Drag to reorder">&#9776;</span>
+          <span style="font-weight:700;font-size:1rem;color:#0b3d6e;min-width:60px;">${escapeHtml(b.sail_number)}</span>
+          <span style="color:#64748b;font-size:0.85rem;flex:1;">${b.nickname ? escapeHtml(b.nickname) : ''}</span>
+          <button type="button" onclick="setBoatDefault(${b.id})" title="Set as default" style="background:none;border:none;cursor:pointer;font-size:1.2rem;padding:2px 6px;${b.is_default ? 'color:#f59e0b;' : 'color:#d1d5db;'}" class="boat-star" data-id="${b.id}">${b.is_default ? '&#9733;' : '&#9734;'}</button>
+          <button type="button" onclick="deleteBoat(${b.id})" title="Remove boat" style="background:none;border:none;cursor:pointer;font-size:1rem;padding:2px 6px;color:#ef4444;">&#10005;</button>
+        </li>`).join('')}
+      </ul>
+      ${boats.length === 0 ? '<p style="color:#94a3b8;font-size:0.88rem;text-align:center;padding:12px 0;">No boats yet. Add one below.</p>' : ''}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;">
+        <div style="flex:1;min-width:100px;">
+          <label style="font-size:0.8rem;color:#555;font-weight:600;">Sail Number *</label>
+          <input type="text" id="add-boat-num" placeholder="e.g. 31847" style="padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">
+        </div>
+        <div style="flex:1;min-width:100px;">
+          <label style="font-size:0.8rem;color:#555;font-weight:600;">Nickname <span style="font-weight:400;color:#94a3b8;">(optional)</span></label>
+          <input type="text" id="add-boat-nick" placeholder="e.g. Race Boat" style="padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">
+        </div>
+        <button type="button" id="add-boat-btn" onclick="addBoat()" style="padding:8px 18px;border-radius:8px;font-size:0.9rem;font-weight:700;cursor:pointer;border:2px solid #0b3d6e;background:#0b3d6e;color:#fff;white-space:nowrap;">+ Add Boat</button>
+      </div>
+      <div id="boat-msg" style="margin-top:8px;font-size:0.82rem;color:#ef4444;display:none;"></div>
+    </div>
+    <script>
+    function addBoat() {
+      var num = document.getElementById('add-boat-num');
+      var nick = document.getElementById('add-boat-nick');
+      var msg = document.getElementById('boat-msg');
+      if (!num.value.trim()) { msg.textContent = 'Sail number is required.'; msg.style.display = 'block'; return; }
+      msg.style.display = 'none';
+      fetch('/api/my-boats/add', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({sail_number: num.value.trim(), nickname: nick.value.trim()}) })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          if (d.error) { msg.textContent = d.error; msg.style.display = 'block'; return; }
+          location.reload();
+        });
+    }
+    function deleteBoat(id) {
+      if (!confirm('Remove this boat?')) return;
+      fetch('/api/my-boats/' + id + '/delete', { method:'POST' })
+        .then(function(r) { return r.json(); })
+        .then(function(d) { if (d.ok) location.reload(); });
+    }
+    function setBoatDefault(id) {
+      fetch('/api/my-boats/' + id + '/set-default', { method:'POST' })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          if (!d.ok) return;
+          document.querySelectorAll('.boat-star').forEach(function(s) {
+            s.innerHTML = '&#9734;'; s.style.color = '#d1d5db';
+          });
+          var star = document.querySelector('.boat-star[data-id="' + id + '"]');
+          if (star) { star.innerHTML = '&#9733;'; star.style.color = '#f59e0b'; }
+        });
+    }
+    (function() {
+      var list = document.getElementById('my-boats-list');
+      if (!list) return;
+      var dragEl = null;
+      list.addEventListener('dragstart', function(e) {
+        dragEl = e.target.closest('li');
+        if (dragEl) { dragEl.style.opacity = '0.4'; e.dataTransfer.effectAllowed = 'move'; }
+      });
+      list.addEventListener('dragend', function(e) {
+        if (dragEl) dragEl.style.opacity = '1';
+        dragEl = null;
+      });
+      list.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        var target = e.target.closest('li');
+        if (target && target !== dragEl) {
+          var rect = target.getBoundingClientRect();
+          var mid = rect.top + rect.height / 2;
+          if (e.clientY < mid) { list.insertBefore(dragEl, target); }
+          else { list.insertBefore(dragEl, target.nextSibling); }
+        }
+      });
+      list.addEventListener('drop', function(e) {
+        e.preventDefault();
+        var order = Array.from(list.querySelectorAll('li')).map(function(li) { return parseInt(li.dataset.id); });
+        fetch('/api/my-boats/reorder', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({order: order}) });
+      });
+      // Touch support for mobile drag
+      var touchEl = null, touchClone = null, touchStartY = 0;
+      list.addEventListener('touchstart', function(e) {
+        var li = e.target.closest('li');
+        if (!li || !e.target.closest('span[title="Drag to reorder"]')) return;
+        touchEl = li;
+        touchStartY = e.touches[0].clientY;
+        touchClone = li.cloneNode(true);
+        touchClone.style.position = 'fixed';
+        touchClone.style.zIndex = '9999';
+        touchClone.style.opacity = '0.8';
+        touchClone.style.width = li.offsetWidth + 'px';
+        touchClone.style.pointerEvents = 'none';
+        touchClone.style.left = li.getBoundingClientRect().left + 'px';
+        touchClone.style.top = e.touches[0].clientY - 20 + 'px';
+        document.body.appendChild(touchClone);
+        li.style.opacity = '0.3';
+      }, {passive: true});
+      list.addEventListener('touchmove', function(e) {
+        if (!touchEl) return;
+        e.preventDefault();
+        var y = e.touches[0].clientY;
+        touchClone.style.top = y - 20 + 'px';
+        var items = Array.from(list.querySelectorAll('li'));
+        for (var i = 0; i < items.length; i++) {
+          if (items[i] === touchEl) continue;
+          var rect = items[i].getBoundingClientRect();
+          if (y > rect.top && y < rect.bottom) {
+            if (y < rect.top + rect.height / 2) list.insertBefore(touchEl, items[i]);
+            else list.insertBefore(touchEl, items[i].nextSibling);
+            break;
+          }
+        }
+      }, {passive: false});
+      list.addEventListener('touchend', function(e) {
+        if (!touchEl) return;
+        touchEl.style.opacity = '1';
+        if (touchClone && touchClone.parentNode) touchClone.parentNode.removeChild(touchClone);
+        var order = Array.from(list.querySelectorAll('li')).map(function(li) { return parseInt(li.dataset.id); });
+        fetch('/api/my-boats/reorder', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({order: order}) });
+        touchEl = null; touchClone = null;
+      });
+    })();
+    </script>
 
     <!-- Data Sharing Preference -->
     <div class="form-card" style="margin-top:24px;">
