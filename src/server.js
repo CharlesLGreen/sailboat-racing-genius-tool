@@ -853,6 +853,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS boat_tasks (
 try { db.exec("ALTER TABLE users ADD COLUMN wire_size_default TEXT"); } catch(e) {}
 try { db.exec("ALTER TABLE users ADD COLUMN language TEXT DEFAULT 'en'"); } catch(e) {}
 try { db.exec("ALTER TABLE users ADD COLUMN data_sharing TEXT"); } catch(e) {}
+try { db.exec("ALTER TABLE users ADD COLUMN last_boat_number TEXT"); } catch(e) {}
 try { db.exec("ALTER TABLE race_logs ADD COLUMN skipper_weight TEXT"); } catch(e) {}
 try { db.exec("ALTER TABLE race_logs ADD COLUMN crew_weight TEXT"); } catch(e) {}
 try { db.exec("ALTER TABLE race_logs ADD COLUMN shroud_turns TEXT"); } catch(e) {}
@@ -1246,22 +1247,22 @@ app.get("/dashboard", requireAuth, (req, res) => {
 app.get("/log-race", (req, res) => res.redirect("/log"));
 
 app.get("/log", requireAuth, (req, res) => {
-  const userCheck = db.prepare("SELECT wire_size_default, data_sharing FROM users WHERE id = ?").get(req.session.user.id);
+  const userCheck = db.prepare("SELECT wire_size_default, data_sharing, last_boat_number FROM users WHERE id = ?").get(req.session.user.id);
   const lang = getLang(req);
-  res.send(renderPage(logFormPage(null, null, userCheck.wire_size_default, lang, userCheck.data_sharing), req.session.user, lang));
+  res.send(renderPage(logFormPage(null, null, userCheck.wire_size_default, lang, userCheck.data_sharing, userCheck.last_boat_number), req.session.user, lang));
 });
 
 app.get("/quick-log", requireAuth, (req, res) => {
   const lang = getLang(req);
-  const userCheck = db.prepare("SELECT data_sharing FROM users WHERE id = ?").get(req.session.user.id);
+  const userCheck = db.prepare("SELECT data_sharing, last_boat_number FROM users WHERE id = ?").get(req.session.user.id);
   if (!userCheck.data_sharing) {
     return res.send(renderPage(dataSharingChoicePage(lang, '/quick-log'), req.session.user, lang));
   }
-  res.send(renderPage(quickLogPage(null, null, lang), req.session.user, lang));
+  res.send(renderPage(quickLogPage(null, null, lang, userCheck.last_boat_number), req.session.user, lang));
 });
 
 app.post("/quick-log", requireAuth, (req, res) => {
-  const { race_date, race_name, finish_position, fleet_size, notes, entry_mode, session_focus, wind_speed } = req.body;
+  const { race_date, race_name, finish_position, fleet_size, notes, entry_mode, session_focus, wind_speed, boat_number } = req.body;
   const lang = getLang(req);
   const isPractice = entry_mode === 'practice';
   const effectiveName = isPractice ? (race_name || 'Practice Session') : race_name;
@@ -1270,19 +1271,22 @@ app.post("/quick-log", requireAuth, (req, res) => {
   const fullNotes = isPractice
     ? [session_focus ? 'Focus: ' + session_focus : '', wind_speed ? 'Wind: ' + wind_speed : '', notes || ''].filter(Boolean).join('\n')
     : (notes || null);
+  if (boat_number) {
+    db.prepare("UPDATE users SET last_boat_number = ? WHERE id = ?").run(boat_number, req.session.user.id);
+  }
   db.prepare(
-    `INSERT INTO race_logs (user_id, race_date, race_name, finish_position, fleet_size, wind_speed, notes)
-     VALUES (?,?,?,?,?,?,?)`
-  ).run(req.session.user.id, race_date, effectiveName, isPractice ? null : (finish_position || null), isPractice ? null : (fleet_size || null), isPractice ? (wind_speed || null) : null, fullNotes);
+    `INSERT INTO race_logs (user_id, race_date, race_name, finish_position, fleet_size, wind_speed, boat_number, notes)
+     VALUES (?,?,?,?,?,?,?,?)`
+  ).run(req.session.user.id, race_date, effectiveName, isPractice ? null : (finish_position || null), isPractice ? null : (fleet_size || null), isPractice ? (wind_speed || null) : null, boat_number || null, fullNotes);
   res.redirect("/dashboard?saved=1");
 });
 
 app.get("/edit/:id", requireAuth, (req, res) => {
   const log = db.prepare("SELECT * FROM race_logs WHERE id = ? AND user_id = ?").get(req.params.id, req.session.user.id);
   if (!log) return res.redirect("/dashboard");
-  const userRow2 = db.prepare("SELECT wire_size_default, data_sharing FROM users WHERE id = ?").get(req.session.user.id);
+  const userRow2 = db.prepare("SELECT wire_size_default, data_sharing, last_boat_number FROM users WHERE id = ?").get(req.session.user.id);
   const lang = getLang(req);
-  res.send(renderPage(logFormPage(log, null, userRow2 && userRow2.wire_size_default, lang, userRow2 && userRow2.data_sharing), req.session.user, lang));
+  res.send(renderPage(logFormPage(log, null, userRow2 && userRow2.wire_size_default, lang, userRow2 && userRow2.data_sharing, userRow2 && userRow2.last_boat_number), req.session.user, lang));
 });
 
 app.get("/sailor/:username", (req, res) => {
@@ -1523,13 +1527,18 @@ app.post("/data-sharing", requireAuth, (req, res) => {
 app.post("/log", requireAuth, (req, res) => {
   const { race_date, race_name, location, wind_speed, wind_direction, sea_state, temperature, current_tide, finish_position, fleet_size, performance_rating, boat_number, crew_name, skipper_weight, crew_weight, main_maker, jib_maker, jib_used, mainsail_used, main_condition, jib_condition, mast_rake, shroud_tension, shroud_turns, wire_size, wire_size_save_default, jib_lead, jib_cloth_tension, jib_height, jib_outboard_lead, cunningham, outhaul, vang, spreader_length, spreader_sweep, centerboard_position, traveler_position, augie_equalizer, mast_wiggle, water_type, sail_settings_notes, notes } = req.body;
   if (!race_date || !race_name) {
-    const dsRow = db.prepare("SELECT data_sharing FROM users WHERE id = ?").get(req.session.user.id);
-    return res.send(renderPage(logFormPage(req.body, "Race date and name are required.", null, getLang(req), dsRow && dsRow.data_sharing), req.session.user, getLang(req)));
+    const dsRow = db.prepare("SELECT data_sharing, last_boat_number FROM users WHERE id = ?").get(req.session.user.id);
+    return res.send(renderPage(logFormPage(req.body, "Race date and name are required.", null, getLang(req), dsRow && dsRow.data_sharing, dsRow && dsRow.last_boat_number), req.session.user, getLang(req)));
   }
 
   // Save wire size as user default if checkbox checked
   if (wire_size_save_default && wire_size) {
     db.prepare("UPDATE users SET wire_size_default = ? WHERE id = ?").run(wire_size, req.session.user.id);
+  }
+
+  // Save last boat number to user profile
+  if (boat_number) {
+    db.prepare("UPDATE users SET last_boat_number = ? WHERE id = ?").run(boat_number, req.session.user.id);
   }
 
   db.prepare(
@@ -1543,6 +1552,9 @@ app.post("/edit/:id", requireAuth, (req, res) => {
   const { race_date, race_name, location, wind_speed, wind_direction, sea_state, temperature, current_tide, finish_position, fleet_size, performance_rating, boat_number, crew_name, skipper_weight, crew_weight, main_maker, jib_maker, jib_used, mainsail_used, main_condition, jib_condition, mast_rake, shroud_tension, shroud_turns, wire_size, wire_size_save_default, jib_lead, jib_cloth_tension, jib_height, jib_outboard_lead, cunningham, outhaul, vang, spreader_length, spreader_sweep, centerboard_position, traveler_position, augie_equalizer, mast_wiggle, water_type, sail_settings_notes, notes } = req.body;
   if (wire_size_save_default && wire_size) {
     db.prepare("UPDATE users SET wire_size_default = ? WHERE id = ?").run(wire_size, req.session.user.id);
+  }
+  if (boat_number) {
+    db.prepare("UPDATE users SET last_boat_number = ? WHERE id = ?").run(boat_number, req.session.user.id);
   }
   db.prepare(
     `UPDATE race_logs SET race_date=?, race_name=?, location=?, wind_speed=?, wind_direction=?, sea_state=?, temperature=?, current_tide=?, finish_position=?, fleet_size=?, performance_rating=?, boat_number=?, crew_name=?, skipper_weight=?, crew_weight=?, main_maker=?, jib_maker=?, jib_used=?, mainsail_used=?, main_condition=?, jib_condition=?, mast_rake=?, shroud_tension=?, shroud_turns=?, wire_size=?, jib_lead=?, jib_cloth_tension=?, jib_height=?, jib_outboard_lead=?, cunningham=?, outhaul=?, vang=?, spreader_length=?, spreader_sweep=?, centerboard_position=?, traveler_position=?, augie_equalizer=?, mast_wiggle=?, water_type=?, sail_settings_notes=?, notes=?
@@ -7295,7 +7307,7 @@ function coachingPage(raceLogs, uploads, pastReports, highlightUploadId, error, 
   </script>`;
 }
 
-function quickLogPage(data, error, lang) {
+function quickLogPage(data, error, lang, lastBoatNumber) {
   lang = lang || 'en';
   const d = data || {};
   const today = new Date().toISOString().slice(0, 10);
@@ -7365,6 +7377,21 @@ function quickLogPage(data, error, lang) {
               <button type="button" class="quick-mic" data-target="wind-speed-input" aria-label="Voice input" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);width:40px;height:40px;border-radius:50%;background:#e8f0fe;border:2px solid #cbd5e0;font-size:1.3rem;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#0b3d6e;padding:0;line-height:1;z-index:2;">&#127908;</button>
             </div>
           </div>
+        </div>
+
+        <div class="quick-race-field">
+          <label>Boat Number</label>
+          ${(function() {
+            const knownBoats = ['31776', '31847', '31900', '32023'];
+            const curVal = d.boat_number || lastBoatNumber || '31847';
+            const isOther = curVal && !knownBoats.includes(curVal);
+            return '<select id="qb-select" onchange="var oi=document.getElementById(\'qb-other\');var hi=document.getElementById(\'qb-hidden\');if(this.value===\'other\'){oi.style.display=\'block\';oi.focus();hi.value=oi.value;}else{oi.style.display=\'none\';hi.value=this.value;}" style="padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">'
+              + knownBoats.map(function(b) { return '<option value="' + b + '"' + (curVal === b ? ' selected' : '') + '>' + b + '</option>'; }).join('')
+              + '<option value="other"' + (isOther ? ' selected' : '') + '>Other...</option>'
+              + '</select>'
+              + '<input type="text" id="qb-other" placeholder="e.g. 31234" value="' + (isOther ? escapeHtml(curVal) : '') + '" oninput="document.getElementById(\'qb-hidden\').value=this.value" style="display:' + (isOther ? 'block' : 'none') + ';margin-top:6px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">'
+              + '<input type="hidden" name="boat_number" id="qb-hidden" value="' + escapeHtml(curVal) + '">';
+          })()}
         </div>
 
         <div class="quick-race-field">
@@ -7488,7 +7515,7 @@ function quickLogPage(data, error, lang) {
   </script>`;
 }
 
-function logFormPage(data, error, userWireDefault, lang, dataSharing) {
+function logFormPage(data, error, userWireDefault, lang, dataSharing, lastBoatNumber) {
   userWireDefault = userWireDefault || '';
   lang = lang || 'en';
   const L = (k) => t(k, lang);
@@ -7587,7 +7614,17 @@ function logFormPage(data, error, userWireDefault, lang, dataSharing) {
           </div>
           <div class="form-group">
             <label>${L('boatNumber')}</label>
-            <input type="text" name="boat_number" value="${escapeHtml(d.boat_number)}" placeholder="${L('egBoatNum')}">
+            ${(function() {
+              const knownBoats = ['31776', '31847', '31900', '32023'];
+              const curVal = d.boat_number || lastBoatNumber || '31847';
+              const isOther = curVal && !knownBoats.includes(curVal);
+              return '<select id="boat-number-select" onchange="var oi=document.getElementById(\'boat-number-other\');var hi=document.getElementById(\'boat-number-hidden\');if(this.value===\'other\'){oi.style.display=\'block\';oi.focus();hi.value=oi.value;}else{oi.style.display=\'none\';hi.value=this.value;}" style="padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">'
+                + knownBoats.map(function(b) { return '<option value="' + b + '"' + (curVal === b ? ' selected' : '') + '>' + b + '</option>'; }).join('')
+                + '<option value="other"' + (isOther ? ' selected' : '') + '>Other...</option>'
+                + '</select>'
+                + '<input type="text" id="boat-number-other" placeholder="' + L('egBoatNum') + '" value="' + (isOther ? escapeHtml(curVal) : '') + '" oninput="document.getElementById(\'boat-number-hidden\').value=this.value" style="display:' + (isOther ? 'block' : 'none') + ';margin-top:6px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">'
+                + '<input type="hidden" name="boat_number" id="boat-number-hidden" value="' + escapeHtml(curVal) + '">';
+            })()}
           </div>
           <div class="form-group">
             <label>${L('crewName')}</label>
