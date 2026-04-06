@@ -1191,13 +1191,20 @@ app.get("/dashboard", requireAuth, (req, res) => {
 });
 
 app.get("/log", requireAuth, (req, res) => {
-  const userRow = db.prepare("SELECT wire_size_default FROM users WHERE id = ?").get(req.session.user.id);
+  const userCheck = db.prepare("SELECT wire_size_default, data_sharing FROM users WHERE id = ?").get(req.session.user.id);
   const lang = getLang(req);
-  res.send(renderPage(logFormPage(null, null, userRow && userRow.wire_size_default, lang), req.session.user, lang));
+  if (!userCheck.data_sharing) {
+    return res.send(renderPage(dataSharingChoicePage(lang, '/log'), req.session.user, lang));
+  }
+  res.send(renderPage(logFormPage(null, null, userCheck.wire_size_default, lang), req.session.user, lang));
 });
 
 app.get("/quick-log", requireAuth, (req, res) => {
   const lang = getLang(req);
+  const userCheck = db.prepare("SELECT data_sharing FROM users WHERE id = ?").get(req.session.user.id);
+  if (!userCheck.data_sharing) {
+    return res.send(renderPage(dataSharingChoicePage(lang, '/quick-log'), req.session.user, lang));
+  }
   res.send(renderPage(quickLogPage(null, null, lang), req.session.user, lang));
 });
 
@@ -1207,14 +1214,6 @@ app.post("/quick-log", requireAuth, (req, res) => {
   const isPractice = entry_mode === 'practice';
   const effectiveName = isPractice ? (race_name || 'Practice Session') : race_name;
   if (!race_date || !effectiveName) return res.send(renderPage(quickLogPage(req.body, "Race date and event name are required.", lang), req.session.user, lang));
-
-  // Check data sharing preference — show modal if not yet chosen
-  const userPref = db.prepare("SELECT data_sharing FROM users WHERE id = ?").get(req.session.user.id);
-  if (!userPref.data_sharing) {
-    // Store form data in session so we can save after choice
-    req.session.pendingLog = { source: 'quick', body: req.body };
-    return res.send(renderPage(dataSharingChoicePage(lang), req.session.user, lang));
-  }
 
   const fullNotes = isPractice
     ? [session_focus ? 'Focus: ' + session_focus : '', wind_speed ? 'Wind: ' + wind_speed : '', notes || ''].filter(Boolean).join('\n')
@@ -1257,7 +1256,7 @@ app.post("/register", async (req, res) => {
       "INSERT INTO users (username, email, password_hash, display_name, boat_name, snipe_number, language) VALUES (?, ?, ?, ?, ?, ?, ?)"
     ).run(username.trim().toLowerCase(), email.trim().toLowerCase(), hash, display_name?.trim() || null, boat_name?.trim() || null, snipe_number?.trim() || null, lang);
     req.session.lang = lang;
-    req.session.user = { id: result.lastInsertRowid, username: username.trim().toLowerCase(), email: email.trim().toLowerCase(), display_name: display_name?.trim() || null, boat_name: boat_name?.trim() || null, snipe_number: snipe_number?.trim() || null };
+    req.session.user = { id: result.lastInsertRowid, username: username.trim().toLowerCase(), email: email.trim().toLowerCase(), display_name: display_name?.trim() || null, boat_name: boat_name?.trim() || null, snipe_number: snipe_number?.trim() || null, data_sharing: null };
     res.redirect("/dashboard");
   } catch (err) {
     if (err.code === "SQLITE_CONSTRAINT_UNIQUE") {
@@ -1279,7 +1278,7 @@ app.post("/login", async (req, res) => {
   // Save language preference
   db.prepare("UPDATE users SET language = ? WHERE id = ?").run(lang, user.id);
   req.session.lang = lang;
-  req.session.user = { id: user.id, username: user.username, email: user.email, display_name: user.display_name, boat_name: user.boat_name, snipe_number: user.snipe_number };
+  req.session.user = { id: user.id, username: user.username, email: user.email, display_name: user.display_name, boat_name: user.boat_name, snipe_number: user.snipe_number, data_sharing: user.data_sharing || null };
   res.redirect("/dashboard");
 });
 
@@ -1444,7 +1443,7 @@ app.post("/profile", requireAuth, (req, res) => {
   const { display_name, boat_name, snipe_number } = req.body;
   db.prepare("UPDATE users SET display_name=?, boat_name=?, snipe_number=? WHERE id=?").run(display_name?.trim() || null, boat_name?.trim() || null, snipe_number?.trim() || null, req.session.user.id);
   const user = db.prepare("SELECT * FROM users WHERE id = ?").get(req.session.user.id);
-  req.session.user = { id: user.id, username: user.username, email: user.email, display_name: user.display_name, boat_name: user.boat_name, snipe_number: user.snipe_number };
+  req.session.user = { id: user.id, username: user.username, email: user.email, display_name: user.display_name, boat_name: user.boat_name, snipe_number: user.snipe_number, data_sharing: user.data_sharing || null };
   res.send(renderPage(profilePage(user, "Profile updated!"), req.session.user, getLang(req)));
 });
 
@@ -1452,34 +1451,13 @@ app.post("/profile", requireAuth, (req, res) => {
 app.post("/data-sharing", requireAuth, (req, res) => {
   const choice = req.body.data_sharing === 'share' ? 'share' : 'private';
   db.prepare("UPDATE users SET data_sharing = ? WHERE id = ?").run(choice, req.session.user.id);
+  req.session.user.data_sharing = choice;
 
-  // If there's a pending log from the one-time choice page, save it now
-  const pending = req.session.pendingLog;
-  if (pending) {
-    delete req.session.pendingLog;
-    if (pending.source === 'quick') {
-      const d = pending.body;
-      const isPractice = d.entry_mode === 'practice';
-      const effectiveName = isPractice ? (d.race_name || 'Practice Session') : d.race_name;
-      const fullNotes = isPractice
-        ? [d.session_focus ? 'Focus: ' + d.session_focus : '', d.wind_speed ? 'Wind: ' + d.wind_speed : '', d.notes || ''].filter(Boolean).join('\n')
-        : (d.notes || null);
-      db.prepare("INSERT INTO race_logs (user_id, race_date, race_name, finish_position, fleet_size, wind_speed, notes) VALUES (?,?,?,?,?,?,?)")
-        .run(req.session.user.id, d.race_date, effectiveName, isPractice ? null : (d.finish_position || null), isPractice ? null : (d.fleet_size || null), isPractice ? (d.wind_speed || null) : null, fullNotes);
-    } else if (pending.source === 'detailed') {
-      const d = pending.body;
-      if (d.wire_size_save_default && d.wire_size) {
-        db.prepare("UPDATE users SET wire_size_default = ? WHERE id = ?").run(d.wire_size, req.session.user.id);
-      }
-      db.prepare(
-        `INSERT INTO race_logs (user_id, race_date, race_name, location, wind_speed, wind_direction, sea_state, temperature, current_tide, finish_position, fleet_size, performance_rating, boat_number, crew_name, skipper_weight, crew_weight, main_maker, jib_maker, jib_used, mainsail_used, main_condition, jib_condition, mast_rake, shroud_tension, shroud_turns, wire_size, jib_lead, jib_cloth_tension, jib_height, jib_outboard_lead, cunningham, outhaul, vang, spreader_length, spreader_sweep, centerboard_position, traveler_position, augie_equalizer, mast_wiggle, water_type, sail_settings_notes, notes)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-      ).run(req.session.user.id, d.race_date, d.race_name, d.location, d.wind_speed, d.wind_direction, d.sea_state, d.temperature, d.current_tide, d.finish_position, d.fleet_size, d.performance_rating, d.boat_number, d.crew_name, d.skipper_weight, d.crew_weight, d.main_maker, d.jib_maker, d.jib_used, d.mainsail_used, d.main_condition, d.jib_condition, d.mast_rake, d.shroud_tension, d.shroud_turns, d.wire_size, d.jib_lead, d.jib_cloth_tension, d.jib_height, d.jib_outboard_lead, d.cunningham, d.outhaul, d.vang, d.spreader_length, d.spreader_sweep, d.centerboard_position, d.traveler_position, d.augie_equalizer, d.mast_wiggle, d.water_type, d.sail_settings_notes, d.notes);
-    }
-    return res.redirect("/dashboard?saved=1");
+  // Redirect to the page they were trying to access, or profile
+  const next = req.body.next;
+  if (next && (next === '/log' || next === '/quick-log')) {
+    return res.redirect(next);
   }
-
-  // If called from profile form, redirect back
   res.redirect("/profile?updated=1");
 });
 
@@ -1488,13 +1466,6 @@ app.post("/data-sharing", requireAuth, (req, res) => {
 app.post("/log", requireAuth, (req, res) => {
   const { race_date, race_name, location, wind_speed, wind_direction, sea_state, temperature, current_tide, finish_position, fleet_size, performance_rating, boat_number, crew_name, skipper_weight, crew_weight, main_maker, jib_maker, jib_used, mainsail_used, main_condition, jib_condition, mast_rake, shroud_tension, shroud_turns, wire_size, wire_size_save_default, jib_lead, jib_cloth_tension, jib_height, jib_outboard_lead, cunningham, outhaul, vang, spreader_length, spreader_sweep, centerboard_position, traveler_position, augie_equalizer, mast_wiggle, water_type, sail_settings_notes, notes } = req.body;
   if (!race_date || !race_name) return res.send(renderPage(logFormPage(req.body, "Race date and name are required.", null, getLang(req)), req.session.user, getLang(req)));
-
-  // Check data sharing preference — show choice page if not yet chosen
-  const userPref = db.prepare("SELECT data_sharing FROM users WHERE id = ?").get(req.session.user.id);
-  if (!userPref.data_sharing) {
-    req.session.pendingLog = { source: 'detailed', body: req.body };
-    return res.send(renderPage(dataSharingChoicePage(getLang(req)), req.session.user, getLang(req)));
-  }
 
   // Save wire size as user default if checkbox checked
   if (wire_size_save_default && wire_size) {
@@ -6321,6 +6292,9 @@ function renderPage(content, user, lang, showHero) {
     .sticky-nav a:hover { background: rgba(255,255,255,0.15); }
     .sticky-nav a.btn-accent { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); }
     .sticky-nav .user-badge { color: rgba(255,255,255,0.75); font-size: 0.8rem; padding: 10px 6px; }
+    .ds-badge { font-size: 0.7rem !important; padding: 4px 8px !important; border-radius: 6px !important; font-weight: 700 !important; text-decoration: none !important; white-space: nowrap; }
+    .ds-share { background: rgba(5,150,105,0.25) !important; color: #6ee7b7 !important; border: 1px solid rgba(110,231,183,0.3) !important; }
+    .ds-private { background: rgba(255,255,255,0.1) !important; color: rgba(255,255,255,0.7) !important; border: 1px solid rgba(255,255,255,0.2) !important; }
     .header-nav a {
       color: rgba(255,255,255,0.9); text-decoration: none; padding: 12px 16px;
       border-radius: 6px; font-weight: 600; font-size: 0.9rem; transition: background 0.2s;
@@ -6721,6 +6695,7 @@ function renderPage(content, user, lang, showHero) {
       <a href="/tasks">${L('tasks')}</a>
       <a href="/profile">${L('profile')}</a>
       <span class="user-badge">${lang === 'es' ? '🇪🇸' : lang === 'it' ? '🇮🇹' : lang === 'pt' ? '🇧🇷' : '🇺🇸🇬🇧'} ${escapeHtml(user.display_name || user.username)}</span>
+      ${user.data_sharing ? `<a href="/profile" class="ds-badge ${user.data_sharing === 'share' ? 'ds-share' : 'ds-private'}">${user.data_sharing === 'share' ? '&#127760; Sharing' : '&#128274; Private'}</a>` : ''}
       <a href="/logout">${L('logout')}</a>
     ` : `
       <a href="/">🏠 ${L('home')}</a>
@@ -8017,13 +7992,14 @@ function registerPage(error) {
   </script>`;
 }
 
-function dataSharingChoicePage(lang) {
+function dataSharingChoicePage(lang, nextUrl) {
   return `<div class="container" style="max-width:560px;">
     <div class="form-card wide" style="padding:32px 24px;text-align:center;">
-      <h2 style="color:#0b3d6e;margin:0 0 8px;font-size:1.4rem;">Before we save your log...</h2>
+      <h2 style="color:#0b3d6e;margin:0 0 8px;font-size:1.4rem;">One quick thing first...</h2>
       <p style="color:#555;font-size:0.95rem;margin-bottom:24px;">How would you like your data used within the Snipeovation community?</p>
 
       <form method="POST" action="/data-sharing">
+        <input type="hidden" name="next" value="${escapeHtml(nextUrl || '')}">
         <label style="display:flex;align-items:flex-start;gap:12px;padding:18px 16px;border:2px solid #e2e8f0;border-radius:12px;margin-bottom:12px;cursor:pointer;text-align:left;transition:all 0.2s;" onmouseover="this.style.borderColor='#059669';this.style.background='#f0fdf4'" onmouseout="this.style.borderColor=this.querySelector('input').checked?'#059669':'#e2e8f0';this.style.background=this.querySelector('input').checked?'#ecfdf5':'#fff'">
           <input type="radio" name="data_sharing" value="share" style="margin-top:4px;accent-color:#059669;width:18px;height:18px;flex-shrink:0;">
           <div>
@@ -8040,7 +8016,7 @@ function dataSharingChoicePage(lang) {
           </div>
         </label>
 
-        <button type="submit" class="btn btn-primary" style="width:100%;padding:14px;font-size:1.05rem;" id="ds-save-btn" disabled>Save &amp; Log My Race</button>
+        <button type="submit" class="btn btn-primary" style="width:100%;padding:14px;font-size:1.05rem;" id="ds-save-btn" disabled>Continue</button>
       </form>
       <p style="color:#94a3b8;font-size:0.8rem;margin-top:14px;">You can change this anytime in <a href="/profile" style="color:#1a6fb5;font-weight:600;">Profile settings</a>.</p>
     </div>
