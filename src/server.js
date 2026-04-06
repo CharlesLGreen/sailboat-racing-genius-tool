@@ -799,6 +799,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS boat_tasks (
 // Add new columns to existing databases (safe to run repeatedly - SQLite ignores if column exists)
 try { db.exec("ALTER TABLE users ADD COLUMN wire_size_default TEXT"); } catch(e) {}
 try { db.exec("ALTER TABLE users ADD COLUMN language TEXT DEFAULT 'en'"); } catch(e) {}
+try { db.exec("ALTER TABLE users ADD COLUMN data_sharing TEXT"); } catch(e) {}
 try { db.exec("ALTER TABLE race_logs ADD COLUMN skipper_weight TEXT"); } catch(e) {}
 try { db.exec("ALTER TABLE race_logs ADD COLUMN crew_weight TEXT"); } catch(e) {}
 try { db.exec("ALTER TABLE race_logs ADD COLUMN shroud_turns TEXT"); } catch(e) {}
@@ -1045,7 +1046,7 @@ function tPage(html, lang) {
 // --- PAGE ROUTES ---
 
 app.get("/", (req, res) => {
-  const logs = db.prepare(`SELECT r.*, u.username FROM race_logs r JOIN users u ON r.user_id = u.id ORDER BY r.race_date DESC, r.created_at DESC LIMIT 50`).all();
+  const logs = db.prepare(`SELECT r.*, u.username FROM race_logs r JOIN users u ON r.user_id = u.id WHERE u.data_sharing = 'share' ORDER BY r.race_date DESC, r.created_at DESC LIMIT 50`).all();
   const lang = getLang(req);
   res.send(renderPage(homePage(logs, req.session.user, lang), req.session.user, lang, true));
 });
@@ -1206,6 +1207,15 @@ app.post("/quick-log", requireAuth, (req, res) => {
   const isPractice = entry_mode === 'practice';
   const effectiveName = isPractice ? (race_name || 'Practice Session') : race_name;
   if (!race_date || !effectiveName) return res.send(renderPage(quickLogPage(req.body, "Race date and event name are required.", lang), req.session.user, lang));
+
+  // Check data sharing preference — show modal if not yet chosen
+  const userPref = db.prepare("SELECT data_sharing FROM users WHERE id = ?").get(req.session.user.id);
+  if (!userPref.data_sharing) {
+    // Store form data in session so we can save after choice
+    req.session.pendingLog = { source: 'quick', body: req.body };
+    return res.send(renderPage(dataSharingChoicePage(lang), req.session.user, lang));
+  }
+
   const fullNotes = isPractice
     ? [session_focus ? 'Focus: ' + session_focus : '', wind_speed ? 'Wind: ' + wind_speed : '', notes || ''].filter(Boolean).join('\n')
     : (notes || null);
@@ -1438,11 +1448,53 @@ app.post("/profile", requireAuth, (req, res) => {
   res.send(renderPage(profilePage(user, "Profile updated!"), req.session.user, getLang(req)));
 });
 
+// --- DATA SHARING PREFERENCE ---
+app.post("/data-sharing", requireAuth, (req, res) => {
+  const choice = req.body.data_sharing === 'share' ? 'share' : 'private';
+  db.prepare("UPDATE users SET data_sharing = ? WHERE id = ?").run(choice, req.session.user.id);
+
+  // If there's a pending log from the one-time choice page, save it now
+  const pending = req.session.pendingLog;
+  if (pending) {
+    delete req.session.pendingLog;
+    if (pending.source === 'quick') {
+      const d = pending.body;
+      const isPractice = d.entry_mode === 'practice';
+      const effectiveName = isPractice ? (d.race_name || 'Practice Session') : d.race_name;
+      const fullNotes = isPractice
+        ? [d.session_focus ? 'Focus: ' + d.session_focus : '', d.wind_speed ? 'Wind: ' + d.wind_speed : '', d.notes || ''].filter(Boolean).join('\n')
+        : (d.notes || null);
+      db.prepare("INSERT INTO race_logs (user_id, race_date, race_name, finish_position, fleet_size, wind_speed, notes) VALUES (?,?,?,?,?,?,?)")
+        .run(req.session.user.id, d.race_date, effectiveName, isPractice ? null : (d.finish_position || null), isPractice ? null : (d.fleet_size || null), isPractice ? (d.wind_speed || null) : null, fullNotes);
+    } else if (pending.source === 'detailed') {
+      const d = pending.body;
+      if (d.wire_size_save_default && d.wire_size) {
+        db.prepare("UPDATE users SET wire_size_default = ? WHERE id = ?").run(d.wire_size, req.session.user.id);
+      }
+      db.prepare(
+        `INSERT INTO race_logs (user_id, race_date, race_name, location, wind_speed, wind_direction, sea_state, temperature, current_tide, finish_position, fleet_size, performance_rating, boat_number, crew_name, skipper_weight, crew_weight, main_maker, jib_maker, jib_used, mainsail_used, main_condition, jib_condition, mast_rake, shroud_tension, shroud_turns, wire_size, jib_lead, jib_cloth_tension, jib_height, jib_outboard_lead, cunningham, outhaul, vang, spreader_length, spreader_sweep, centerboard_position, traveler_position, augie_equalizer, mast_wiggle, water_type, sail_settings_notes, notes)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      ).run(req.session.user.id, d.race_date, d.race_name, d.location, d.wind_speed, d.wind_direction, d.sea_state, d.temperature, d.current_tide, d.finish_position, d.fleet_size, d.performance_rating, d.boat_number, d.crew_name, d.skipper_weight, d.crew_weight, d.main_maker, d.jib_maker, d.jib_used, d.mainsail_used, d.main_condition, d.jib_condition, d.mast_rake, d.shroud_tension, d.shroud_turns, d.wire_size, d.jib_lead, d.jib_cloth_tension, d.jib_height, d.jib_outboard_lead, d.cunningham, d.outhaul, d.vang, d.spreader_length, d.spreader_sweep, d.centerboard_position, d.traveler_position, d.augie_equalizer, d.mast_wiggle, d.water_type, d.sail_settings_notes, d.notes);
+    }
+    return res.redirect("/dashboard?saved=1");
+  }
+
+  // If called from profile form, redirect back
+  res.redirect("/profile?updated=1");
+});
+
 // --- RACE LOG ROUTES ---
 
 app.post("/log", requireAuth, (req, res) => {
   const { race_date, race_name, location, wind_speed, wind_direction, sea_state, temperature, current_tide, finish_position, fleet_size, performance_rating, boat_number, crew_name, skipper_weight, crew_weight, main_maker, jib_maker, jib_used, mainsail_used, main_condition, jib_condition, mast_rake, shroud_tension, shroud_turns, wire_size, wire_size_save_default, jib_lead, jib_cloth_tension, jib_height, jib_outboard_lead, cunningham, outhaul, vang, spreader_length, spreader_sweep, centerboard_position, traveler_position, augie_equalizer, mast_wiggle, water_type, sail_settings_notes, notes } = req.body;
   if (!race_date || !race_name) return res.send(renderPage(logFormPage(req.body, "Race date and name are required.", null, getLang(req)), req.session.user, getLang(req)));
+
+  // Check data sharing preference — show choice page if not yet chosen
+  const userPref = db.prepare("SELECT data_sharing FROM users WHERE id = ?").get(req.session.user.id);
+  if (!userPref.data_sharing) {
+    req.session.pendingLog = { source: 'detailed', body: req.body };
+    return res.send(renderPage(dataSharingChoicePage(getLang(req)), req.session.user, getLang(req)));
+  }
 
   // Save wire size as user default if checkbox checked
   if (wire_size_save_default && wire_size) {
@@ -6104,6 +6156,7 @@ SAILOR PROFILE:
 - Boat: Snipe #${user.snipe_number || 'unknown'}
 - Total races logged: ${allLogs.length}
 - Results with positions: ${results.length}
+- Data sharing: ${user.data_sharing === 'share' ? 'SHARED — their anonymized data contributes to fleet-wide insights. Include a brief note acknowledging this in the report summary.' : 'PRIVATE — coaching uses only their personal data. Do NOT reference fleet benchmarking or community comparisons.'}
 
 RECENT RESULTS TREND:
 ${resultsSummary}
@@ -7964,7 +8017,60 @@ function registerPage(error) {
   </script>`;
 }
 
+function dataSharingChoicePage(lang) {
+  return `<div class="container" style="max-width:560px;">
+    <div class="form-card wide" style="padding:32px 24px;text-align:center;">
+      <h2 style="color:#0b3d6e;margin:0 0 8px;font-size:1.4rem;">Before we save your log...</h2>
+      <p style="color:#555;font-size:0.95rem;margin-bottom:24px;">How would you like your data used within the Snipeovation community?</p>
+
+      <form method="POST" action="/data-sharing">
+        <label style="display:flex;align-items:flex-start;gap:12px;padding:18px 16px;border:2px solid #e2e8f0;border-radius:12px;margin-bottom:12px;cursor:pointer;text-align:left;transition:all 0.2s;" onmouseover="this.style.borderColor='#059669';this.style.background='#f0fdf4'" onmouseout="this.style.borderColor=this.querySelector('input').checked?'#059669':'#e2e8f0';this.style.background=this.querySelector('input').checked?'#ecfdf5':'#fff'">
+          <input type="radio" name="data_sharing" value="share" style="margin-top:4px;accent-color:#059669;width:18px;height:18px;flex-shrink:0;">
+          <div>
+            <div style="font-weight:700;color:#059669;font-size:1.05rem;">&#127760; Share my data</div>
+            <div style="color:#555;font-size:0.88rem;margin-top:4px;line-height:1.5;">Contribute to Race Feed and fleet-wide aggregated insights. I benefit from the collective knowledge of all Snipeovation sailors.</div>
+          </div>
+        </label>
+
+        <label style="display:flex;align-items:flex-start;gap:12px;padding:18px 16px;border:2px solid #e2e8f0;border-radius:12px;margin-bottom:20px;cursor:pointer;text-align:left;transition:all 0.2s;" onmouseover="this.style.borderColor='#0b3d6e';this.style.background='#f0f7ff'" onmouseout="this.style.borderColor=this.querySelector('input').checked?'#0b3d6e':'#e2e8f0';this.style.background=this.querySelector('input').checked?'#f0f7ff':'#fff'">
+          <input type="radio" name="data_sharing" value="private" style="margin-top:4px;accent-color:#0b3d6e;width:18px;height:18px;flex-shrink:0;">
+          <div>
+            <div style="font-weight:700;color:#0b3d6e;font-size:1.05rem;">&#128274; Keep private</div>
+            <div style="color:#555;font-size:0.88rem;margin-top:4px;line-height:1.5;">My data is for my use only. I won't contribute to or receive fleet-wide aggregated coaching insights.</div>
+          </div>
+        </label>
+
+        <button type="submit" class="btn btn-primary" style="width:100%;padding:14px;font-size:1.05rem;" id="ds-save-btn" disabled>Save &amp; Log My Race</button>
+      </form>
+      <p style="color:#94a3b8;font-size:0.8rem;margin-top:14px;">You can change this anytime in <a href="/profile" style="color:#1a6fb5;font-weight:600;">Profile settings</a>.</p>
+    </div>
+  </div>
+  <script>
+  (function() {
+    var radios = document.querySelectorAll('input[name="data_sharing"]');
+    var btn = document.getElementById('ds-save-btn');
+    for (var i = 0; i < radios.length; i++) {
+      radios[i].addEventListener('change', function() {
+        btn.disabled = false;
+        // Update label highlight
+        for (var j = 0; j < radios.length; j++) {
+          var lbl = radios[j].closest('label');
+          if (radios[j].checked) {
+            lbl.style.borderColor = radios[j].value === 'share' ? '#059669' : '#0b3d6e';
+            lbl.style.background = radios[j].value === 'share' ? '#ecfdf5' : '#f0f7ff';
+          } else {
+            lbl.style.borderColor = '#e2e8f0';
+            lbl.style.background = '#fff';
+          }
+        }
+      });
+    }
+  })();
+  </script>`;
+}
+
 function profilePage(userData, success) {
+  const sharing = userData.data_sharing;
   return `<div class="container">
     <h2>My Profile <span class="sub">Update your sailor info and boat details</span></h2>
     ${success ? `<div class="alert alert-success">${escapeHtml(success)}</div>` : ""}
@@ -7988,6 +8094,30 @@ function profilePage(userData, success) {
         <strong>Username:</strong> ${escapeHtml(userData.username)} &nbsp;&bull;&nbsp;
         <strong>Email:</strong> ${escapeHtml(userData.email)}
       </div>
+    </div>
+
+    <!-- Data Sharing Preference -->
+    <div class="form-card" style="margin-top:24px;">
+      <h3 style="color:#0b3d6e;margin:0 0 12px;font-size:1.1rem;">Data Sharing</h3>
+      <p style="color:#666;font-size:0.88rem;margin-bottom:16px;">Control how your data is used within the Snipeovation community.</p>
+      <form method="POST" action="/data-sharing">
+        <label style="display:flex;align-items:flex-start;gap:10px;padding:14px;border:2px solid ${sharing === 'share' ? '#059669' : '#e2e8f0'};border-radius:10px;margin-bottom:10px;cursor:pointer;background:${sharing === 'share' ? '#ecfdf5' : '#fff'};transition:all 0.2s;">
+          <input type="radio" name="data_sharing" value="share" ${sharing === 'share' ? 'checked' : ''} style="margin-top:3px;accent-color:#059669;">
+          <div>
+            <div style="font-weight:700;color:#059669;font-size:0.95rem;">&#127760; Share my data</div>
+            <div style="color:#555;font-size:0.83rem;margin-top:2px;">Contribute to Race Feed and fleet-wide aggregated insights. Benefit from the collective knowledge of all Snipeovation sailors.</div>
+          </div>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:10px;padding:14px;border:2px solid ${sharing === 'private' ? '#0b3d6e' : '#e2e8f0'};border-radius:10px;margin-bottom:16px;cursor:pointer;background:${sharing === 'private' ? '#f0f7ff' : '#fff'};transition:all 0.2s;">
+          <input type="radio" name="data_sharing" value="private" ${sharing === 'private' ? 'checked' : ''} style="margin-top:3px;accent-color:#0b3d6e;">
+          <div>
+            <div style="font-weight:700;color:#0b3d6e;font-size:0.95rem;">&#128274; Keep private</div>
+            <div style="color:#555;font-size:0.83rem;margin-top:2px;">Your data is for your use only. You won't contribute to or receive fleet-wide aggregated coaching insights.</div>
+          </div>
+        </label>
+        <button type="submit" class="btn btn-primary" style="width:100%;">Save Preference</button>
+      </form>
+      ${!sharing ? '<p style="color:#c2410c;font-size:0.82rem;margin-top:10px;font-weight:600;">You haven\'t chosen a preference yet. You\'ll be asked when you log your first race.</p>' : ''}
     </div>
   </div>`;
 }
