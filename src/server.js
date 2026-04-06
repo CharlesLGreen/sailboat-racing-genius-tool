@@ -6237,7 +6237,7 @@ app.get("/coaching", requireAuth, (req, res) => {
   `).all(req.session.user.id);
   const pastReports = db.prepare("SELECT * FROM coaching_reports WHERE user_id = ? ORDER BY created_at DESC LIMIT 10").all(req.session.user.id);
   const hasApiToken = !!db.prepare('SELECT 1 FROM vakaros_api_keys WHERE user_id = ?').get(req.session.user.id);
-  res.send(renderPage(coachingPage(logs, uploads, pastReports, null, null, lang, hasApiToken), req.session.user, lang));
+  res.send(renderPage(coachingPage(logs, uploads, pastReports, null, null, lang, null, hasApiToken), req.session.user, lang));
 });
 
 app.post("/vakaros/upload", requireAuth, upload.single("vakaros_csv"), (req, res) => {
@@ -7326,7 +7326,7 @@ function sailorPage(sailor, logs, lang) {
   </div>`;
 }
 
-function coachingPage(raceLogs, uploads, pastReports, highlightUploadId, error, lang, successMsg) {
+function coachingPage(raceLogs, uploads, pastReports, highlightUploadId, error, lang, successMsg, hasApiToken) {
   lang = lang || 'en';
   const raceCount = raceLogs.length;
   const practiceCount = raceLogs.filter(r => !r.finish_position && r.notes).length;
@@ -7422,6 +7422,58 @@ function coachingPage(raceLogs, uploads, pastReports, highlightUploadId, error, 
         &#128225; Vakaros Sensor Data ${uploads.length > 0 ? '<span style="font-size:0.85rem;color:#059669;font-weight:600;">(' + uploads.length + ' uploaded)</span>' : '<span style="font-size:0.85rem;color:#888;font-weight:400;">(optional &mdash; enhances coaching)</span>'}
       </summary>
 
+      <!-- Import via Vakaros API -->
+      <div class="form-card wide" style="margin-top:12px;margin-bottom:16px;border:2px solid #1a6fb5;">
+        <h4 style="color:#0b3d6e;margin:0 0 14px;font-size:1rem;">&#9889; Import via Vakaros API</h4>
+
+        <!-- Step 1: API Token -->
+        <div style="background:#f0f7ff;border:1px solid #d0e2f7;border-radius:10px;padding:14px;margin-bottom:14px;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <span style="font-weight:700;color:#0b3d6e;font-size:0.9rem;">API Token</span>
+            ${hasApiToken ? '<span style="color:#059669;font-weight:700;font-size:0.88rem;">&#10003; Token saved</span>' : '<span style="color:#94a3b8;font-size:0.85rem;">Add token</span>'}
+          </div>
+          <div style="display:flex;gap:8px;">
+            <input type="text" id="vak-api-token" placeholder="Paste your Vakaros API token" style="flex:1;padding:8px 10px;border:2px solid #e2e8f0;border-radius:8px;font-size:0.88rem;">
+            <button class="btn btn-primary" style="padding:8px 16px;font-size:0.88rem;white-space:nowrap;" onclick="saveVakarosToken()">Save Token</button>
+          </div>
+          <div id="vak-token-status" style="margin-top:6px;font-size:0.82rem;"></div>
+        </div>
+
+        <!-- Step 2: Event Lookup -->
+        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px;margin-bottom:14px;">
+          <div style="font-weight:700;color:#0b3d6e;font-size:0.9rem;margin-bottom:8px;">Look Up Event</div>
+          <div style="display:flex;gap:8px;">
+            <input type="text" id="vak-event-id" placeholder="Event ID (e.g. my-regatta-2026)" style="flex:1;padding:8px 10px;border:2px solid #e2e8f0;border-radius:8px;font-size:0.88rem;">
+            <button class="btn btn-primary" style="padding:8px 16px;font-size:0.88rem;white-space:nowrap;" onclick="lookupVakarosEvent()">Look Up Event</button>
+          </div>
+          <div id="vak-event-status" style="margin-top:6px;font-size:0.82rem;"></div>
+        </div>
+
+        <!-- Step 3: Division/Race selector (hidden until event loaded) -->
+        <div id="vak-event-results" style="display:none;background:#ecfdf5;border:1px solid #86efac;border-radius:10px;padding:14px;margin-bottom:14px;">
+          <div style="font-weight:700;color:#059669;font-size:0.9rem;margin-bottom:10px;">&#9989; Event Loaded</div>
+          <div style="margin-bottom:10px;">
+            <label style="font-weight:600;color:#333;font-size:0.85rem;display:block;margin-bottom:4px;">Division / Race</label>
+            <select id="vak-division-select" style="width:100%;padding:8px 10px;border:2px solid #e2e8f0;border-radius:8px;font-size:0.88rem;" onchange="updateVakarosTimeRange()"></select>
+          </div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+            <div style="flex:1;min-width:140px;">
+              <label style="font-weight:600;color:#333;font-size:0.82rem;display:block;margin-bottom:3px;">After (start)</label>
+              <input type="text" id="vak-after" readonly style="width:100%;padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:0.82rem;background:#f8fafc;color:#555;">
+            </div>
+            <div style="flex:1;min-width:140px;">
+              <label style="font-weight:600;color:#333;font-size:0.82rem;display:block;margin-bottom:3px;">Before (end)</label>
+              <input type="text" id="vak-before" readonly style="width:100%;padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:0.82rem;background:#f8fafc;color:#555;">
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+            <button class="btn btn-primary" style="padding:10px 24px;font-size:0.95rem;font-weight:700;" onclick="importVakarosEvent()">&#128229; Import Telemetry</button>
+            <a id="vak-live-link" href="#" target="_blank" style="color:#1a6fb5;font-weight:600;font-size:0.9rem;text-decoration:none;">&#9881;&#65039; Watch Live &rarr;</a>
+          </div>
+          <div id="vak-import-status" style="margin-top:8px;font-size:0.85rem;"></div>
+        </div>
+      </div>
+
       <div class="form-card wide" style="margin-top:12px;margin-bottom:16px;">
         <div style="background:#f0f7ff;border:1px solid #d0e2f7;border-radius:12px;padding:16px;margin-bottom:16px;">
           <h4 style="color:#0b3d6e;margin:0 0 10px;font-size:0.9rem;">Share from Vakaros (installed app):</h4>
@@ -7516,6 +7568,103 @@ function coachingPage(raceLogs, uploads, pastReports, highlightUploadId, error, 
       if (fileInput.files.length) showFile(fileInput.files[0].name);
     });
   })();
+
+  // --- Vakaros API integration ---
+  var _vakEventData = null;
+
+  function saveVakarosToken() {
+    var token = document.getElementById('vak-api-token').value.trim();
+    var status = document.getElementById('vak-token-status');
+    if (!token) { status.innerHTML = '<span style="color:#dc2626;">Please enter a token.</span>'; return; }
+    status.innerHTML = '<span style="color:#888;">Saving...</span>';
+    fetch('/vakaros/token', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({api_token:token}) })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d.error) { status.innerHTML = '<span style="color:#dc2626;">' + d.error + '</span>'; return; }
+        status.innerHTML = '<span style="color:#059669;font-weight:700;">&#10003; Token saved!</span>';
+      })
+      .catch(function(){ status.innerHTML = '<span style="color:#dc2626;">Network error.</span>'; });
+  }
+
+  function lookupVakarosEvent() {
+    var eventId = document.getElementById('vak-event-id').value.trim();
+    var status = document.getElementById('vak-event-status');
+    var results = document.getElementById('vak-event-results');
+    if (!eventId) { status.innerHTML = '<span style="color:#dc2626;">Enter an Event ID.</span>'; return; }
+    status.innerHTML = '<span style="color:#888;">Looking up event...</span>';
+    results.style.display = 'none';
+    fetch('/vakaros/api/events/' + encodeURIComponent(eventId))
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        if (data.error) { status.innerHTML = '<span style="color:#dc2626;">' + data.error + '</span>'; return; }
+        _vakEventData = data;
+        status.innerHTML = '<span style="color:#059669;">&#10003; Event found!</span>';
+
+        // Populate division/race dropdown
+        var sel = document.getElementById('vak-division-select');
+        sel.innerHTML = '';
+        var divisions = (data.summary && data.summary.divisions) || [];
+        var times = (data.times && data.times.divisions) || data.times || {};
+        divisions.forEach(function(div){
+          var races = div.races || [];
+          if (races.length === 0) {
+            var opt = document.createElement('option');
+            opt.value = JSON.stringify({division:div.division, after:'', before:''});
+            opt.textContent = div.division + ' (no races)';
+            sel.appendChild(opt);
+          } else {
+            races.forEach(function(race, ri){
+              var opt = document.createElement('option');
+              var after = race.start || race.after || '';
+              var before = race.end || race.before || '';
+              opt.value = JSON.stringify({division:div.division, after:after, before:before, race:race.race||ri+1});
+              opt.textContent = div.division + ' — Race ' + (race.race||ri+1) + (after ? ' (' + new Date(after).toLocaleString() + ')' : '');
+              sel.appendChild(opt);
+            });
+          }
+        });
+        if (sel.options.length === 0) {
+          var opt = document.createElement('option');
+          opt.value = JSON.stringify({division:'', after:'', before:''});
+          opt.textContent = 'All data (no divisions found)';
+          sel.appendChild(opt);
+        }
+        updateVakarosTimeRange();
+        document.getElementById('vak-live-link').href = '/vakaros/live/' + encodeURIComponent(eventId);
+        results.style.display = 'block';
+      })
+      .catch(function(){ status.innerHTML = '<span style="color:#dc2626;">Network error. Is your API token saved?</span>'; });
+  }
+
+  function updateVakarosTimeRange() {
+    var sel = document.getElementById('vak-division-select');
+    if (!sel.value) return;
+    try {
+      var v = JSON.parse(sel.value);
+      document.getElementById('vak-after').value = v.after ? new Date(v.after).toLocaleString() : '(auto)';
+      document.getElementById('vak-before').value = v.before ? new Date(v.before).toLocaleString() : '(auto)';
+    } catch(e){}
+  }
+
+  function importVakarosEvent() {
+    var sel = document.getElementById('vak-division-select');
+    var eventId = document.getElementById('vak-event-id').value.trim();
+    var status = document.getElementById('vak-import-status');
+    if (!sel.value || !eventId) { status.innerHTML = '<span style="color:#dc2626;">Select a division/race first.</span>'; return; }
+    var v;
+    try { v = JSON.parse(sel.value); } catch(e){ return; }
+    status.innerHTML = '<span style="color:#888;">&#9203; Importing telemetry...</span>';
+    var body = { event_id: eventId, division: v.division || '', after: v.after || '', before: v.before || '' };
+    if (v.race) body.label = eventId + ' / ' + v.division + ' Race ' + v.race;
+    fetch('/vakaros/import-event', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) })
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        if (data.error) { status.innerHTML = '<span style="color:#dc2626;">' + data.error + '</span>'; return; }
+        status.innerHTML = '<span style="color:#059669;font-weight:700;">&#10003; Imported ' + data.stats.rowCount + ' rows (' + data.stats.durationMinutes + 'm, ' + data.stats.avgSpeed + ' kts avg). Reloading...</span>';
+        setTimeout(function(){ window.location.reload(); }, 1500);
+      })
+      .catch(function(){ status.innerHTML = '<span style="color:#dc2626;">Import failed. Check your token and event ID.</span>'; });
+  }
 
   // Full coaching report (no upload needed)
   function requestFullCoaching() {
