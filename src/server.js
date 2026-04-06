@@ -7449,14 +7449,17 @@ function logFormPage(data, error, userWireDefault, lang, dataSharing) {
 
     <!-- Data Sharing Preference Card -->
     <div id="ds-card" style="margin-bottom:20px;padding:16px 20px;border-radius:12px;border:2px solid ${dsVal === 'share' ? '#059669' : dsVal === 'private' ? '#0b3d6e' : '#e2e8f0'};background:${dsVal === 'share' ? '#ecfdf5' : dsVal === 'private' ? '#eff6ff' : '#f8fafc'};">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-        <div style="font-size:0.85rem;color:#555;font-weight:600;">Data Sharing</div>
-        <div style="display:flex;gap:8px;">
-          <button type="button" id="ds-share-btn" onclick="setDataSharing('share')" style="padding:8px 16px;border-radius:8px;font-size:0.85rem;font-weight:700;cursor:pointer;transition:all 0.2s;border:2px solid ${dsVal === 'share' ? '#059669' : '#d1d5db'};background:${dsVal === 'share' ? '#059669' : '#fff'};color:${dsVal === 'share' ? '#fff' : '#6b7280'};">&#127760; Share my data</button>
-          <button type="button" id="ds-private-btn" onclick="setDataSharing('private')" style="padding:8px 16px;border-radius:8px;font-size:0.85rem;font-weight:700;cursor:pointer;transition:all 0.2s;border:2px solid ${dsVal === 'private' ? '#0b3d6e' : '#d1d5db'};background:${dsVal === 'private' ? '#0b3d6e' : '#fff'};color:${dsVal === 'private' ? '#fff' : '#6b7280'};">&#128274; Keep Private</button>
+      <div style="font-size:0.85rem;color:#555;font-weight:600;margin-bottom:12px;">Data Sharing</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div style="display:flex;flex-direction:column;gap:6px;">
+          <button type="button" id="ds-share-btn" onclick="setDataSharing('share')" style="padding:10px 16px;border-radius:8px;font-size:0.85rem;font-weight:700;cursor:pointer;transition:all 0.2s;border:2px solid ${dsVal === 'share' ? '#059669' : '#d1d5db'};background:${dsVal === 'share' ? '#059669' : '#fff'};color:${dsVal === 'share' ? '#fff' : '#6b7280'};width:100%;">&#127760; Share my data</button>
+          <div id="ds-share-desc" style="font-size:0.78rem;line-height:1.4;color:${dsVal === 'share' ? '#065f46' : '#94a3b8'};padding:0 2px;">Your races appear in the Race Feed and contribute to fleet-wide coaching insights. You benefit from aggregated data from all Snipeovation sailors.</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;">
+          <button type="button" id="ds-private-btn" onclick="setDataSharing('private')" style="padding:10px 16px;border-radius:8px;font-size:0.85rem;font-weight:700;cursor:pointer;transition:all 0.2s;border:2px solid ${dsVal === 'private' ? '#0b3d6e' : '#d1d5db'};background:${dsVal === 'private' ? '#0b3d6e' : '#fff'};color:${dsVal === 'private' ? '#fff' : '#6b7280'};width:100%;">&#128274; Keep Private</button>
+          <div id="ds-private-desc" style="font-size:0.78rem;line-height:1.4;color:${dsVal === 'private' ? '#1e3a5f' : '#94a3b8'};padding:0 2px;">Your data is yours alone — not visible in Race Feed and not used in fleet analytics. Your coaching uses only your personal history.</div>
         </div>
       </div>
-      <div id="ds-status" style="margin-top:8px;font-size:0.78rem;color:#64748b;">${dsVal === 'share' ? 'Your races appear in Race Feed and fleet-wide insights.' : dsVal === 'private' ? 'Your data stays private — only you can see it.' : 'Choose how your race data is shared before logging.'}</div>
     </div>
     <script>
     function setDataSharing(choice) {
@@ -7469,20 +7472,21 @@ function logFormPage(data, error, userWireDefault, lang, dataSharing) {
         var card = document.getElementById('ds-card');
         var shareBtn = document.getElementById('ds-share-btn');
         var privBtn = document.getElementById('ds-private-btn');
-        var status = document.getElementById('ds-status');
+        var shareDesc = document.getElementById('ds-share-desc');
+        var privDesc = document.getElementById('ds-private-desc');
         // Also update nav badge
         var navBadge = document.querySelector('.ds-badge');
         if (choice === 'share') {
           card.style.borderColor = '#059669'; card.style.background = '#ecfdf5';
           shareBtn.style.borderColor = '#059669'; shareBtn.style.background = '#059669'; shareBtn.style.color = '#fff';
           privBtn.style.borderColor = '#d1d5db'; privBtn.style.background = '#fff'; privBtn.style.color = '#6b7280';
-          status.textContent = 'Your races appear in Race Feed and fleet-wide insights.';
+          shareDesc.style.color = '#065f46'; privDesc.style.color = '#94a3b8';
           if (navBadge) { navBadge.className = 'ds-badge ds-share'; navBadge.innerHTML = '&#127760; Sharing'; }
         } else {
           card.style.borderColor = '#0b3d6e'; card.style.background = '#eff6ff';
           privBtn.style.borderColor = '#0b3d6e'; privBtn.style.background = '#0b3d6e'; privBtn.style.color = '#fff';
           shareBtn.style.borderColor = '#d1d5db'; shareBtn.style.background = '#fff'; shareBtn.style.color = '#6b7280';
-          status.textContent = 'Your data stays private — only you can see it.';
+          privDesc.style.color = '#1e3a5f'; shareDesc.style.color = '#94a3b8';
           if (navBadge) { navBadge.className = 'ds-badge ds-private'; navBadge.innerHTML = '&#128274; Private'; }
         }
         // If no badge existed yet (first time choosing), create one
