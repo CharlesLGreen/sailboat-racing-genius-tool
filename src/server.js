@@ -5339,10 +5339,13 @@ app.get("/forecast", requireAuth, (req, res) => {
   (function() {
     var map = null;
     var currentMarkers = [];
-    var nearestStation = null;
-    var stationData = null; // { times: [...], speeds: [...], dirs: [...] }
+    var nearbyStations = [];      // [{id, name, lat, lng, distKm, data: {times, speeds, dirs}}]
     var sliderHourOffset = 0;
     var mapCenter = { lat: 25.7617, lon: -80.1918 }; // Miami default
+    var SEARCH_RADIUS_KM = 50;
+    var MAX_STATIONS = 12;        // limit API calls per area
+    var GRID_SPACING_KM = 2;      // ~2km grid for interpolation
+    var GRID_RADIUS_KM = 25;      // build grid within this radius of map center
 
     function initCurrentMap(lat, lon) {
       mapCenter = { lat: lat, lon: lon };
@@ -5351,36 +5354,37 @@ app.get("/forecast", requireAuth, (req, res) => {
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
           attribution: '© OpenStreetMap', maxZoom: 19
         }).addTo(map);
+        map.on('zoomend', function() { redrawAllArrows(); });
       } else {
         map.setView([lat, lon], 11);
       }
-      findNearestCurrentStation(lat, lon);
+      findNearbyCurrentStations(lat, lon);
       loadNwsForecast(lat, lon);
     }
 
-    // NOAA CO-OPS: find nearest active current station
-    function findNearestCurrentStation(lat, lon) {
+    // NOAA CO-OPS: find ALL active current stations within SEARCH_RADIUS_KM
+    function findNearbyCurrentStations(lat, lon) {
       var infoEl = document.getElementById('current-station-info');
-      infoEl.textContent = 'Searching for nearest NOAA current station...';
-      // CO-OPS metadata: list of all current stations
+      infoEl.textContent = 'Finding NOAA current stations within ' + SEARCH_RADIUS_KM + ' km...';
       fetch('https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations.json?type=currentpredictions')
         .then(function(r) { return r.json(); })
         .then(function(data) {
           var stations = data.stations || [];
-          if (!stations.length) { infoEl.textContent = 'No current stations available.'; return; }
-          var nearest = null, minDist = Infinity;
-          stations.forEach(function(s) {
-            var d = haversine(lat, lon, s.lat, s.lng);
-            if (d < minDist) { minDist = d; nearest = s; }
-          });
-          if (!nearest || minDist > 200) {
-            infoEl.textContent = 'No NOAA current station within 200 km of this location.';
+          var withDist = stations.map(function(s) {
+            return { id: s.id, name: s.name, lat: s.lat, lng: s.lng, distKm: haversine(lat, lon, s.lat, s.lng) };
+          }).filter(function(s) { return s.distKm <= SEARCH_RADIUS_KM; })
+            .sort(function(a, b) { return a.distKm - b.distKm; })
+            .slice(0, MAX_STATIONS);
+
+          if (withDist.length === 0) {
+            infoEl.textContent = 'No NOAA current stations within ' + SEARCH_RADIUS_KM + ' km of this location.';
             clearCurrentMarkers();
+            nearbyStations = [];
             return;
           }
-          nearestStation = nearest;
-          infoEl.innerHTML = '📡 Nearest station: <b>' + nearest.name + '</b> (' + nearest.id + ') — ' + Math.round(minDist) + ' km away';
-          fetchStationCurrents(nearest);
+          nearbyStations = withDist;
+          infoEl.innerHTML = '📡 Found <b>' + withDist.length + '</b> stations within ' + SEARCH_RADIUS_KM + ' km — loading predictions...';
+          fetchAllStationCurrents();
         })
         .catch(function(err) {
           infoEl.textContent = 'Error fetching NOAA stations: ' + err.message;
@@ -5397,36 +5401,44 @@ app.get("/forecast", requireAuth, (req, res) => {
       return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
     }
 
-    function fetchStationCurrents(station) {
-      // Get next 24 hours of current predictions, 1-hour interval
+    function fetchAllStationCurrents() {
       var now = new Date();
       var pad = function(n) { return String(n).padStart(2,'0'); };
       var fmtDate = function(d) { return d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()); };
       var endDate = new Date(now.getTime() + 24*3600*1000);
-      var url = 'https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?' +
-        'product=currents_predictions&application=Snipeovation&format=json&units=english&time_zone=lst_ldt' +
-        '&interval=h&station=' + station.id +
-        '&begin_date=' + fmtDate(now) + '&end_date=' + fmtDate(endDate);
-      fetch(url)
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-          var preds = (data.current_predictions && data.current_predictions.cp) || [];
-          if (!preds.length) {
-            document.getElementById('current-station-info').innerHTML += ' <span style="color:#ef5350;">— no predictions returned</span>';
-            return;
-          }
-          stationData = {
-            times: preds.map(function(p) { return p.Time; }),
-            speeds: preds.map(function(p) { return parseFloat(p.Velocity_Major) || parseFloat(p.Speed) || 0; }),
-            dirs: preds.map(function(p) { return parseFloat(p.meanFloodDir) || parseFloat(p.Direction) || 0; })
-          };
-          // Place a marker at the station location
-          drawCurrentArrow(station.lat, station.lng, 0);
-          updateSliderLabel(0);
-        })
-        .catch(function(err) {
-          document.getElementById('current-station-info').innerHTML += ' <span style="color:#ef5350;">— ' + err.message + '</span>';
-        });
+
+      var promises = nearbyStations.map(function(station) {
+        var url = 'https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?' +
+          'product=currents_predictions&application=Snipeovation&format=json&units=english&time_zone=lst_ldt' +
+          '&interval=h&station=' + station.id +
+          '&begin_date=' + fmtDate(now) + '&end_date=' + fmtDate(endDate);
+        return fetch(url)
+          .then(function(r) { return r.json(); })
+          .then(function(data) {
+            var preds = (data.current_predictions && data.current_predictions.cp) || [];
+            if (preds.length) {
+              station.data = {
+                times: preds.map(function(p) { return p.Time; }),
+                speeds: preds.map(function(p) { return parseFloat(p.Velocity_Major) || parseFloat(p.Speed) || 0; }),
+                dirs: preds.map(function(p) { return parseFloat(p.meanFloodDir) || parseFloat(p.Direction) || 0; })
+              };
+            }
+          })
+          .catch(function() { /* skip station on error */ });
+      });
+
+      Promise.all(promises).then(function() {
+        var withData = nearbyStations.filter(function(s) { return s.data; });
+        nearbyStations = withData;
+        var infoEl = document.getElementById('current-station-info');
+        if (!withData.length) {
+          infoEl.innerHTML = '<span style="color:#ef5350;">No predictions returned for any stations.</span>';
+          return;
+        }
+        infoEl.innerHTML = '📡 <b>' + withData.length + '</b> NOAA stations loaded. Grid-interpolated current field shown across the area.';
+        redrawAllArrows();
+        updateSliderLabel(0);
+      });
     }
 
     function clearCurrentMarkers() {
@@ -5434,22 +5446,99 @@ app.get("/forecast", requireAuth, (req, res) => {
       currentMarkers = [];
     }
 
-    function drawCurrentArrow(lat, lon, hourIdx) {
-      if (!stationData) return;
+    // Inverse-distance weighted interpolation of speed + direction at (lat, lon)
+    // Direction is interpolated as a vector to avoid wraparound issues
+    function interpolateAt(lat, lon, hourIdx) {
+      if (!nearbyStations.length) return null;
+      var sumW = 0, vx = 0, vy = 0;
+      var POWER = 2;
+      for (var i = 0; i < nearbyStations.length; i++) {
+        var s = nearbyStations[i];
+        if (!s.data) continue;
+        var idx = Math.min(hourIdx, s.data.speeds.length - 1);
+        var speed = s.data.speeds[idx] || 0;
+        var dir = s.data.dirs[idx] || 0;
+        // ebb = negative speed -> reverse direction
+        var actualDir = speed < 0 ? (dir + 180) % 360 : dir;
+        var spd = Math.abs(speed);
+        var d = haversine(lat, lon, s.lat, s.lng);
+        if (d < 0.05) return { speed: spd, dir: actualDir, exact: true };
+        var w = 1 / Math.pow(d, POWER);
+        var rad = actualDir * Math.PI / 180;
+        vx += w * spd * Math.sin(rad);
+        vy += w * spd * Math.cos(rad);
+        sumW += w;
+      }
+      if (sumW === 0) return null;
+      vx /= sumW; vy /= sumW;
+      var interpSpeed = Math.sqrt(vx*vx + vy*vy);
+      var interpDir = (Math.atan2(vx, vy) * 180 / Math.PI + 360) % 360;
+      return { speed: interpSpeed, dir: interpDir, exact: false };
+    }
+
+    function arrowSizeForZoom() {
+      if (!map) return 14;
+      var z = map.getZoom();
+      // Smaller at low zoom, larger at high zoom
+      if (z <= 9) return 10;
+      if (z <= 10) return 12;
+      if (z <= 11) return 14;
+      if (z <= 12) return 17;
+      if (z <= 13) return 20;
+      return 24;
+    }
+
+    function makeArrowHtml(speed, dir, size, isStation) {
+      var color = speed < 0.5 ? '#42a5f5' : speed < 1.5 ? '#ffd54f' : '#ef5350';
+      var opacity = isStation ? 1 : 0.75;
+      var border = isStation ? 'text-shadow:0 0 4px rgba(0,0,0,0.9),0 0 2px #fff;' : 'text-shadow:0 0 3px rgba(0,0,0,0.7);';
+      return '<div style="transform:rotate(' + dir + 'deg);transform-origin:center;font-size:' + size + 'px;color:' + color + ';opacity:' + opacity + ';line-height:1;' + border + 'pointer-events:none;">➤</div>';
+    }
+
+    function redrawAllArrows() {
+      if (!map || !nearbyStations.length) return;
       clearCurrentMarkers();
-      var speed = stationData.speeds[hourIdx] || 0;
-      var dir = stationData.dirs[hourIdx] || 0;
-      var absSpeed = Math.abs(speed);
-      var color = absSpeed < 0.5 ? '#42a5f5' : absSpeed < 1.5 ? '#ffd54f' : '#ef5350';
-      var size = Math.min(60, 20 + absSpeed * 18);
-      // Negative speed in NOAA = ebb (opposite direction)
-      var rotateDeg = speed < 0 ? (dir + 180) % 360 : dir;
-      var html = '<div style="transform:rotate(' + rotateDeg + 'deg);transform-origin:center;font-size:' + size + 'px;color:' + color + ';line-height:1;text-shadow:0 0 6px rgba(0,0,0,0.7);animation:pulse 2s infinite;">➤</div>';
-      var icon = L.divIcon({ html: html, className: '', iconSize: [size, size], iconAnchor: [size/2, size/2] });
-      var marker = L.marker([lat, lon], { icon: icon })
-        .bindPopup('<b>' + (nearestStation ? nearestStation.name : '') + '</b><br>Speed: ' + absSpeed.toFixed(2) + ' kts<br>Direction: ' + Math.round(dir) + '°<br>' + (speed < 0 ? 'EBB' : 'FLOOD'))
-        .addTo(map);
-      currentMarkers.push(marker);
+      var hourIdx = sliderHourOffset;
+      var size = arrowSizeForZoom();
+
+      // 1) Draw interpolated grid arrows
+      var center = mapCenter;
+      // Convert km to degrees: ~111 km per degree latitude; longitude scales by cos(lat)
+      var latStep = GRID_SPACING_KM / 111;
+      var lonStep = GRID_SPACING_KM / (111 * Math.cos(center.lat * Math.PI / 180));
+      var radiusDeg = GRID_RADIUS_KM / 111;
+
+      for (var dLat = -radiusDeg; dLat <= radiusDeg; dLat += latStep) {
+        for (var dLon = -radiusDeg; dLon <= radiusDeg; dLon += lonStep) {
+          var glat = center.lat + dLat;
+          var glon = center.lon + dLon;
+          // Skip points outside circular radius
+          if (haversine(center.lat, center.lon, glat, glon) > GRID_RADIUS_KM) continue;
+          var interp = interpolateAt(glat, glon, hourIdx);
+          if (!interp || interp.speed < 0.05) continue;
+          var html = makeArrowHtml(interp.speed, interp.dir, size, false);
+          var icon = L.divIcon({ html: html, className: '', iconSize: [size, size], iconAnchor: [size/2, size/2] });
+          var marker = L.marker([glat, glon], { icon: icon, interactive: false }).addTo(map);
+          currentMarkers.push(marker);
+        }
+      }
+
+      // 2) Draw real station arrows on top (clickable, slightly larger)
+      var stationSize = size + 4;
+      nearbyStations.forEach(function(s) {
+        if (!s.data) return;
+        var idx = Math.min(hourIdx, s.data.speeds.length - 1);
+        var rawSpeed = s.data.speeds[idx] || 0;
+        var rawDir = s.data.dirs[idx] || 0;
+        var spd = Math.abs(rawSpeed);
+        var dir = rawSpeed < 0 ? (rawDir + 180) % 360 : rawDir;
+        var html = makeArrowHtml(spd, dir, stationSize, true);
+        var icon = L.divIcon({ html: html, className: '', iconSize: [stationSize, stationSize], iconAnchor: [stationSize/2, stationSize/2] });
+        var marker = L.marker([s.lat, s.lng], { icon: icon })
+          .bindPopup('<b>' + s.name + '</b><br>Station ' + s.id + '<br>Speed: ' + spd.toFixed(2) + ' kts<br>Direction: ' + Math.round(dir) + '°<br>' + (rawSpeed < 0 ? 'EBB' : 'FLOOD'))
+          .addTo(map);
+        currentMarkers.push(marker);
+      });
     }
 
     function updateSliderLabel(hourIdx) {
@@ -5462,9 +5551,7 @@ app.get("/forecast", requireAuth, (req, res) => {
     document.getElementById('current-time-slider').addEventListener('input', function(e) {
       sliderHourOffset = parseInt(e.target.value, 10);
       updateSliderLabel(sliderHourOffset);
-      if (nearestStation && stationData) {
-        drawCurrentArrow(nearestStation.lat, nearestStation.lng, Math.min(sliderHourOffset, stationData.speeds.length - 1));
-      }
+      redrawAllArrows();
     });
 
     window.searchSailingArea = function() {
