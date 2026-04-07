@@ -5346,6 +5346,7 @@ app.get("/forecast", requireAuth, (req, res) => {
     var MAX_STATIONS = 12;        // limit API calls per area
     var GRID_SPACING_KM = 2;      // ~2km grid for interpolation
     var GRID_RADIUS_KM = 25;      // build grid within this radius of map center
+    var LAND_FILTER_KM = 6;       // skip grid points >6km from any NOAA station (likely on land)
 
     function initCurrentMap(lat, lon) {
       mapCenter = { lat: lat, lon: lon };
@@ -5490,9 +5491,27 @@ app.get("/forecast", requireAuth, (req, res) => {
 
     function makeArrowHtml(speed, dir, size, isStation) {
       var color = speed < 0.5 ? '#42a5f5' : speed < 1.5 ? '#ffd54f' : '#ef5350';
-      var opacity = isStation ? 1 : 0.75;
-      var border = isStation ? 'text-shadow:0 0 4px rgba(0,0,0,0.9),0 0 2px #fff;' : 'text-shadow:0 0 3px rgba(0,0,0,0.7);';
-      return '<div style="transform:rotate(' + dir + 'deg);transform-origin:center;font-size:' + size + 'px;color:' + color + ';opacity:' + opacity + ';line-height:1;' + border + 'pointer-events:none;">➤</div>';
+      var opacity = isStation ? 1 : 0.85;
+      var sw = Math.max(1.5, size * 0.13);
+      var stationStroke = isStation ? ' stroke="#0b1a2b" stroke-width="0.8"' : '';
+      // Arrow points "up" (north). Tail length = 2× arrowhead length.
+      // Arrowhead: y=0 to y=size/3 (length size/3). Tail: y=size/3 to y=size (length 2*size/3).
+      var cx = size / 2;
+      var svg = '<svg width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '" ' +
+        'style="transform:rotate(' + dir + 'deg);transform-origin:center;display:block;overflow:visible;filter:drop-shadow(0 0 1.5px rgba(0,0,0,0.85));">' +
+        '<line x1="' + cx + '" y1="' + size + '" x2="' + cx + '" y2="' + (size/3) + '" stroke="' + color + '" stroke-width="' + sw + '" stroke-linecap="round"/>' +
+        '<polygon points="' + cx + ',0 ' + (size*0.22) + ',' + (size/3) + ' ' + (size*0.78) + ',' + (size/3) + '" fill="' + color + '"' + stationStroke + '/>' +
+        '</svg>';
+      return '<div style="opacity:' + opacity + ';pointer-events:none;">' + svg + '</div>';
+    }
+
+    // Approximate "is over water" check: only true if within LAND_FILTER_KM of any NOAA station
+    function isLikelyWater(lat, lon) {
+      for (var i = 0; i < nearbyStations.length; i++) {
+        var s = nearbyStations[i];
+        if (haversine(lat, lon, s.lat, s.lng) <= LAND_FILTER_KM) return true;
+      }
+      return false;
     }
 
     function redrawAllArrows() {
@@ -5514,6 +5533,8 @@ app.get("/forecast", requireAuth, (req, res) => {
           var glon = center.lon + dLon;
           // Skip points outside circular radius
           if (haversine(center.lat, center.lon, glat, glon) > GRID_RADIUS_KM) continue;
+          // Skip points likely on land (>LAND_FILTER_KM from any NOAA water station)
+          if (!isLikelyWater(glat, glon)) continue;
           var interp = interpolateAt(glat, glon, hourIdx);
           if (!interp || interp.speed < 0.05) continue;
           var html = makeArrowHtml(interp.speed, interp.dir, size, false);
