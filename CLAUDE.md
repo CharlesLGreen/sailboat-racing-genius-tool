@@ -62,22 +62,50 @@
 - PWA install banner
 
 ## Architecture notes
-- The `/forecast` route has **two IIFEs** in its inline `<script>` blocks:
-  1. The original forecast IIFE (`useGeoLocation()`, `loadForecast()`, `renderWind()`, `renderTide()`)
-  2. The new sailing-area current map + NWS IIFE
-- The original IIFE is the **single source of truth for geolocation**. After `/api/forecast` returns it calls `window.initCurrentMapAt(lat, lon)` to bootstrap the new map. This was previously a duplicated geolocation prompt that caused a race condition — do not re-introduce it.
+- The `/forecast` route has **three independent IIFEs** in its inline `<script>` blocks. Each one is fully self-contained — do not introduce cross-IIFE coupling, it caused multi-day breakage:
+  1. **Original forecast IIFE** — `loadForecast()`, `renderWind()`, `renderTide()`, render the 24-hour wind chart, hourly wind direction chart, and tide chart. Tries `navigator.geolocation` on auto-load and falls back to Miami `(25.7617, -80.1918)` if denied.
+  2. **Sailing Area Current Map IIFE** — Leaflet map, NOAA CO-OPS multi-station + interpolated grid arrows. Initializes immediately with Miami coords on its own (no geolocation prompt). Has its own search box and "📍 My Location" button.
+  3. **7-Day NWS Wind Forecast IIFE** — `api.weather.gov/points/{lat},{lon}` → `forecastHourly`. Initializes immediately with Miami coords on its own.
+- `/api/forecast` backend:
+  - **Wind primary source: NWS** `api.weather.gov` (same API the 7-day forecast uses, confirmed reachable from Railway). Open-Meteo is a non-US fallback only.
+  - **Tide:** searches NOAA CO-OPS waterlevels stations within 0.5°. Unconditional **Virginia Key (8723214) hardcoded fallback** if no station found, so the route always returns tide data for the Miami area.
+  - Each external fetch is wrapped in its own `try/catch` with content-type guards. A failure in one source no longer kills the whole response. Failures log to the server console with status + content-type for diagnosis.
 - DB migrations happen at startup with `try { db.exec("ALTER TABLE …") } catch(e) {}` near line ~880. Always wrap new ALTERs the same way.
 - Page rendering uses a `renderPage(html, user, lang)` helper that wraps content in the global header/nav/footer. Page-specific functions return the inner HTML string.
 
 ## Conventions
 - Edit `src/server.js` directly. No transpile, no framework, no client bundle.
 - After non-trivial JS edits run `node -c src/server.js` to syntax-check before committing.
+- For network-dependent backend changes, also run a quick boot test:
+  `PORT=39880 node src/server.js` and `curl http://localhost:39880/api/forecast?lat=25.7617&lon=-80.1918`
 - Commit messages: short imperative subject; commits get auto-deployed to Railway via GitHub integration.
 - Don't commit `src/snipe.db-shm` / `src/snipe.db-wal` (SQLite WAL temp files). Stage `src/server.js` explicitly rather than `git add -A`.
+- When adding NEW sections to a complex page, **add them as fully isolated `<div>` + new `<script>` IIFE blocks** rather than modifying existing IIFEs. This avoids the kind of cross-IIFE breakage that took several commits to untangle.
 
-## Current work in progress
-- **Forecast page polish** (just shipped in commit `7446f04`): fixed dual-geolocation race condition; current map now bootstraps from the same coords as the wind/tide flow.
-- **Vakaros API import UI** (just shipped): prominent blue-bordered card at the top of `/coaching`.
+## Recently fixed / shipped today
+- **Forecast wind switched to NWS** (`401262f`) — Open-Meteo isn't reachable from Railway, so wind was returning null and the chart was blank. The route now uses `api.weather.gov` (proven reachable on Railway via the 7-day forecast). Returns 24 hourly periods with knots speeds, degree directions, and 1.3× gust estimates.
+- **Forecast page restored cleanly** (`c8e2f6b`) — earlier in the day a series of cumulative edits to the forecast route had broken the original wind/tide charts. Restored the entire `/forecast` route from commit `7181955` verbatim, then re-added the Sailing Area Current Map and 7-Day NWS Forecast as fully isolated additive sections.
+- **Wind/tide route hardened** (`7d41d71`, `65b9a04`) — every external fetch now has its own try/catch, content-type guard, and timeout. A single API hiccup no longer 500s the whole forecast response.
+- **Virginia Key tide fallback** (`e2399ad`, refined in `7d41d71`) — unconditional hardcoded fallback to NOAA station 8723214 so users never see "no NOAA tide station found" in the Miami area.
+- **GPS-first auto-load** (`401262f`) — `/forecast` tries `navigator.geolocation` first and falls back to Miami coords only on denial / unavailable / 6s timeout.
+
+## Status of all features
+| Feature | Status |
+|---|---|
+| Quick race log + full race log + boats | ✅ shipped |
+| Race feed + data sharing opt-in | ✅ shipped |
+| AI coaching report (Claude Sonnet) | ✅ shipped |
+| Vakaros CSV upload + share-from-app flow | ✅ shipped |
+| Vakaros REST API import (token, event lookup, division/race import) | ✅ shipped |
+| Vakaros live race tracking page (Leaflet + WebSocket) | ✅ shipped |
+| `/forecast` 24-hour wind chart (NWS) | ✅ shipped — fixed today |
+| `/forecast` hourly wind direction chart | ✅ shipped |
+| `/forecast` tide / current chart (NOAA, Virginia Key fallback) | ✅ shipped |
+| `/forecast` Sailing Area Current Map (multi-station + grid) | ✅ shipped |
+| `/forecast` 7-Day NWS wind forecast | ✅ shipped |
+| RRS + class rules lookup pages | ✅ shipped |
+| Multi-language (en / es / it / pt) | ✅ shipped |
+| PWA install banner | ✅ shipped |
 
 ## Next features planned
 - Wind shift analysis on the forecast page
