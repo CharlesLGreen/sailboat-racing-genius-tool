@@ -5438,11 +5438,11 @@ app.get("/forecast", requireAuth, (req, res) => {
     var nearbyStations = [];
     var sliderHourOffset = 0;
     var mapCenter = { lat: 25.7617, lon: -80.1918 }; // Miami default
-    var SEARCH_RADIUS_KM = 60;
-    var MAX_STATIONS = 12;
+    var SEARCH_RADIUS_KM = 100;
+    var MAX_STATIONS = 30;
     var GRID_SPACING_KM = 2;
-    var GRID_RADIUS_KM = 40;
-    var LAND_FILTER_KM = 8;
+    var GRID_RADIUS_KM = 120;
+    var LAND_FILTER_KM = 15;
 
     function haversine(lat1, lon1, lat2, lon2) {
       var R = 6371;
