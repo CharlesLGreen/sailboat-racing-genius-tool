@@ -4709,6 +4709,30 @@ app.get("/api/forecast", async (req, res) => {
       }
     } catch(e) { /* tide data is optional */ }
 
+    // Hardcoded fallback for South Florida (Miami area): Virginia Key station 8723214
+    // Triggered when the nearest-station search above didn't find anything within 0.5°.
+    if (!tideData && userLat >= 24.5 && userLat <= 27.5 && userLon >= -81.5 && userLon <= -79.5) {
+      try {
+        const now = new Date();
+        const end = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+        const fmt = d => d.getFullYear() + '' + String(d.getMonth()+1).padStart(2,'0') + '' + String(d.getDate()).padStart(2,'0');
+        const tideUrl = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?begin_date=${fmt(now)}&end_date=${fmt(end)}&station=8723214&product=predictions&datum=MLLW&time_zone=lst_ldt&interval=h&units=english&format=json`;
+        const tideResp = await fetch(tideUrl, { signal: AbortSignal.timeout(6000) });
+        const tideJson = await tideResp.json();
+        if (tideJson.predictions && tideJson.predictions.length) {
+          tideData = {
+            station: 'Virginia Key, FL (fallback)',
+            stationId: '8723214',
+            stationLat: 25.7314,
+            stationLon: -80.1622,
+            distanceMiles: Math.round(Math.sqrt(Math.pow(25.7314 - userLat, 2) + Math.pow(-80.1622 - userLon, 2)) * 60),
+            predictions: tideJson.predictions,
+            currents: null
+          };
+        }
+      } catch(e) { /* fallback optional */ }
+    }
+
     // Fallback for international locations: Open-Meteo Marine API (free, global)
     if (!tideData) {
       try {
@@ -5319,8 +5343,9 @@ app.get("/forecast", requireAuth, (req, res) => {
       if (e.key === 'Enter') useLocationInput();
     });
 
-    // Auto-detect location on page load
-    useGeoLocation();
+    // Load Miami forecast immediately (no geolocation prompt blocking the page).
+    // The "Use My Location" button still re-runs with the user's actual position.
+    loadForecast(25.7617, -80.1918, 'Miami, FL');
   })();
   </script>
 
