@@ -4938,11 +4938,6 @@ app.get("/forecast", requireAuth, (req, res) => {
     <!-- ======================================== -->
     <div style="background:#0b1a2b;color:#e8eaf0;border-radius:14px;padding:20px;margin-top:24px;margin-bottom:20px;box-shadow:0 2px 12px rgba(0,0,0,0.15);">
       <h3 style="color:#90caf9;margin:0 0 14px;display:flex;align-items:center;gap:8px;">🌊 Sailing Area Current Map</h3>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;align-items:center;">
-        <input type="text" id="sailing-area-search" placeholder="Search a sailing area (e.g. Biscayne Bay)" style="flex:1;min-width:220px;padding:9px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.08);color:#fff;font-size:0.92rem;">
-        <button onclick="searchSailingArea()" style="padding:9px 18px;border-radius:8px;border:none;background:#1a6fb5;color:#fff;font-weight:700;cursor:pointer;">Search</button>
-        <button onclick="useGeoForCurrentMap()" style="padding:9px 18px;border-radius:8px;border:none;background:#0b3d6e;color:#fff;font-weight:700;cursor:pointer;">📍 My Location</button>
-      </div>
       <div id="current-map" style="height:420px;border-radius:10px;background:#06101a;"></div>
       <div id="current-station-info" style="margin-top:10px;font-size:0.85rem;color:#90caf9;"></div>
       <div style="margin-top:14px;background:rgba(255,255,255,0.05);border-radius:10px;padding:14px;">
@@ -5019,6 +5014,7 @@ app.get("/forecast", requireAuth, (req, res) => {
     function loadForecast(lat, lon, locName) {
       var statusEl = document.getElementById('location-status');
       statusEl.innerHTML = '${L("locating")} <b>' + (locName || (lat.toFixed(2) + ', ' + lon.toFixed(2))) + '</b>';
+      try { window.dispatchEvent(new CustomEvent('forecast-location-changed', { detail: { lat: lat, lon: lon } })); } catch(e) {}
 
       fetch('/api/forecast?lat=' + lat + '&lon=' + lon)
         .then(function(r) { return r.json(); })
@@ -5666,29 +5662,13 @@ app.get("/forecast", requireAuth, (req, res) => {
       redrawAllArrows();
     });
 
-    window.searchSailingArea = function() {
-      var q = document.getElementById('sailing-area-search').value.trim();
-      if (!q) return;
-      fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(q))
-        .then(function(r) { return r.json(); })
-        .then(function(arr) {
-          if (!arr.length) { alert('Location not found.'); return; }
-          initCurrentMap(parseFloat(arr[0].lat), parseFloat(arr[0].lon));
-        });
-    };
-
-    window.useGeoForCurrentMap = function() {
-      if (!navigator.geolocation) { alert('Geolocation not supported'); return; }
-      navigator.geolocation.getCurrentPosition(function(pos) {
-        initCurrentMap(pos.coords.latitude, pos.coords.longitude);
-      }, function() { alert('Could not get your location'); });
-    };
-
-    document.getElementById('sailing-area-search').addEventListener('keydown', function(e) {
-      if (e.key === 'Enter') window.searchSailingArea();
+    window.addEventListener('forecast-location-changed', function(e) {
+      if (e && e.detail && typeof e.detail.lat === 'number' && typeof e.detail.lon === 'number') {
+        initCurrentMap(e.detail.lat, e.detail.lon);
+      }
     });
 
-    // Initialize immediately with Miami default — no geolocation prompt
+    // Initialize immediately with Miami default — main forecast location bar will update us
     initCurrentMap(mapCenter.lat, mapCenter.lon);
   })();
   </script>
