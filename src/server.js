@@ -4946,6 +4946,10 @@ app.get("/forecast", requireAuth, (req, res) => {
           statusEl.innerHTML = locText;
           renderWind(data.wind);
           renderTide(data.tide, data);
+          // Notify the new Sailing Area Current Map / NWS forecast IIFE
+          if (typeof window.initCurrentMapAt === 'function') {
+            window.initCurrentMapAt(lat, lon);
+          }
         })
         .catch(function(e) {
           statusEl.textContent = 'Error loading forecast.';
@@ -5651,18 +5655,16 @@ app.get("/forecast", requireAuth, (req, res) => {
       return map[c] || 0;
     }
 
-    // Auto-init with geolocation, fallback to default
+    // Expose for the original forecast IIFE to call after it gets coordinates
+    window.initCurrentMapAt = function(lat, lon) {
+      initCurrentMap(lat, lon);
+    };
+
+    // Fallback: if the original forecast flow hasn't called us within 8s
+    // (e.g. user denied geolocation), initialize with the default location
     setTimeout(function() {
-      if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(function(pos) {
-          initCurrentMap(pos.coords.latitude, pos.coords.longitude);
-        }, function() {
-          initCurrentMap(mapCenter.lat, mapCenter.lon);
-        }, { timeout: 6000 });
-      } else {
-        initCurrentMap(mapCenter.lat, mapCenter.lon);
-      }
-    }, 300);
+      if (!map) initCurrentMap(mapCenter.lat, mapCenter.lon);
+    }, 8000);
   })();
   </script>`, req.session.user, lang));
 });
