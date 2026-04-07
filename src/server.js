@@ -4826,20 +4826,20 @@ app.get("/forecast", requireAuth, (req, res) => {
     </div>
 
     <!-- Wind Forecast Chart -->
-    <div id="wind-section" style="background:white;border-radius:12px;padding:20px;margin-bottom:20px;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
+    <div id="wind-section" style="display:none;background:white;border-radius:12px;padding:20px;margin-bottom:20px;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
       <h3 style="color:#0b3d6e;margin-top:0;">🌬️ ${L('windForecast')}</h3>
       <canvas id="wind-chart" height="280"></canvas>
       <div id="wind-detail-table" style="margin-top:18px;overflow-x:auto;"></div>
     </div>
 
     <!-- Wind Direction Compass Chart -->
-    <div id="wind-dir-section" style="background:white;border-radius:12px;padding:20px;margin-bottom:20px;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
+    <div id="wind-dir-section" style="display:none;background:white;border-radius:12px;padding:20px;margin-bottom:20px;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
       <h3 style="color:#0b3d6e;margin-top:0;">🧭 ${lang === 'es' ? 'Dirección del Viento por Hora' : lang === 'it' ? 'Direzione del Vento per Ora' : lang === 'pt' ? 'Direção do Vento por Hora' : 'Hourly Wind Direction'}</h3>
       <canvas id="wind-dir-chart" height="200"></canvas>
     </div>
 
     <!-- Tide/Current Chart -->
-    <div id="tide-section" style="background:white;border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
+    <div id="tide-section" style="display:none;background:white;border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
       <h3 style="color:#0b3d6e;margin-top:0;">🌊 ${L('tideForecast')}</h3>
       <div id="tide-station" style="color:#666;font-size:0.85rem;margin-bottom:10px;"></div>
       <canvas id="tide-chart" height="300"></canvas>
@@ -4849,9 +4849,9 @@ app.get("/forecast", requireAuth, (req, res) => {
       ${lang === 'es' ? 'No se encontró estación de mareas NOAA cerca de esta ubicación.' : lang === 'it' ? 'Nessuna stazione di marea NOAA trovata nelle vicinanze.' : lang === 'pt' ? 'Nenhuma estação de marés NOAA encontrada perto desta localização.' : 'No NOAA tide station found within range of this location.'}
     </div>
 
-    <!-- ============================================ -->
-    <!-- SAILING AREA CURRENT MAP (NOAA CO-OPS)       -->
-    <!-- ============================================ -->
+    <!-- ======================================== -->
+    <!-- SAILING AREA CURRENT MAP (NOAA CO-OPS)   -->
+    <!-- ======================================== -->
     <div style="background:#0b1a2b;color:#e8eaf0;border-radius:14px;padding:20px;margin-top:24px;margin-bottom:20px;box-shadow:0 2px 12px rgba(0,0,0,0.15);">
       <h3 style="color:#90caf9;margin:0 0 14px;display:flex;align-items:center;gap:8px;">🌊 Sailing Area Current Map</h3>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;align-items:center;">
@@ -4876,15 +4876,6 @@ app.get("/forecast", requireAuth, (req, res) => {
           <span style="display:flex;align-items:center;gap:6px;"><span style="display:inline-block;width:14px;height:14px;background:#ef5350;border-radius:3px;"></span>Strong (&gt; 1.5 kts)</span>
         </div>
       </div>
-    </div>
-
-    <!-- ============================================ -->
-    <!-- 7-DAY WIND FORECAST (National Weather Service) -->
-    <!-- ============================================ -->
-    <div style="background:#0b1a2b;color:#e8eaf0;border-radius:14px;padding:20px;margin-bottom:20px;box-shadow:0 2px 12px rgba(0,0,0,0.15);">
-      <h3 style="color:#90caf9;margin:0 0 14px;display:flex;align-items:center;gap:8px;">🌬️ 7-Day Wind Forecast <span style="font-size:0.7rem;color:#78909c;font-weight:400;">via NOAA NWS</span></h3>
-      <div id="nws-forecast-status" style="font-size:0.85rem;color:#78909c;margin-bottom:10px;">Loading forecast for map location...</div>
-      <div id="nws-forecast-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px;"></div>
     </div>
   </div>
 
@@ -4947,10 +4938,6 @@ app.get("/forecast", requireAuth, (req, res) => {
           statusEl.innerHTML = locText;
           renderWind(data.wind);
           renderTide(data.tide, data);
-          // Notify the new Sailing Area Current Map / NWS forecast IIFE
-          if (typeof window.initCurrentMapAt === 'function') {
-            window.initCurrentMapAt(lat, lon);
-          }
         })
         .catch(function(e) {
           statusEl.textContent = 'Error loading forecast.';
@@ -5332,27 +5319,36 @@ app.get("/forecast", requireAuth, (req, res) => {
       if (e.key === 'Enter') useLocationInput();
     });
 
-    // Load Miami forecast immediately on page load (no geolocation wait).
-    // Users can click "Use My Location" to switch to their actual coordinates.
-    loadForecast(25.7617, -80.1918, 'Miami, FL');
+    // Auto-detect location on page load
+    useGeoLocation();
   })();
   </script>
 
-  <!-- Leaflet for the Sailing Area Current Map -->
+  <!-- Sailing Area Current Map: standalone Leaflet section, defaults to Miami -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
   (function() {
     var map = null;
     var currentMarkers = [];
-    var nearbyStations = [];      // [{id, name, lat, lng, distKm, data: {times, speeds, dirs}}]
+    var nearbyStations = [];
     var sliderHourOffset = 0;
     var mapCenter = { lat: 25.7617, lon: -80.1918 }; // Miami default
     var SEARCH_RADIUS_KM = 50;
-    var MAX_STATIONS = 12;        // limit API calls per area
-    var GRID_SPACING_KM = 2;      // ~2km grid for interpolation
-    var GRID_RADIUS_KM = 40;      // build grid within this radius of map center
-    var LAND_FILTER_KM = 12;      // skip grid points >12km from any NOAA station (likely on land)
+    var MAX_STATIONS = 12;
+    var GRID_SPACING_KM = 2;
+    var GRID_RADIUS_KM = 40;
+    var LAND_FILTER_KM = 12;
+
+    function haversine(lat1, lon1, lat2, lon2) {
+      var R = 6371;
+      var dLat = (lat2 - lat1) * Math.PI / 180;
+      var dLon = (lon2 - lon1) * Math.PI / 180;
+      var a = Math.sin(dLat/2)*Math.sin(dLat/2) +
+              Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) *
+              Math.sin(dLon/2)*Math.sin(dLon/2);
+      return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    }
 
     function initCurrentMap(lat, lon) {
       mapCenter = { lat: lat, lon: lon };
@@ -5366,10 +5362,8 @@ app.get("/forecast", requireAuth, (req, res) => {
         map.setView([lat, lon], 11);
       }
       findNearbyCurrentStations(lat, lon);
-      loadNwsForecast(lat, lon);
     }
 
-    // NOAA CO-OPS: find ALL active current stations within SEARCH_RADIUS_KM
     function findNearbyCurrentStations(lat, lon) {
       var infoEl = document.getElementById('current-station-info');
       infoEl.textContent = 'Finding NOAA current stations within ' + SEARCH_RADIUS_KM + ' km...';
@@ -5398,16 +5392,6 @@ app.get("/forecast", requireAuth, (req, res) => {
         });
     }
 
-    function haversine(lat1, lon1, lat2, lon2) {
-      var R = 6371;
-      var dLat = (lat2 - lat1) * Math.PI / 180;
-      var dLon = (lon2 - lon1) * Math.PI / 180;
-      var a = Math.sin(dLat/2)*Math.sin(dLat/2) +
-              Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) *
-              Math.sin(dLon/2)*Math.sin(dLon/2);
-      return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    }
-
     function fetchAllStationCurrents() {
       var now = new Date();
       var pad = function(n) { return String(n).padStart(2,'0'); };
@@ -5431,18 +5415,17 @@ app.get("/forecast", requireAuth, (req, res) => {
               };
             }
           })
-          .catch(function() { /* skip station on error */ });
+          .catch(function() {});
       });
 
       Promise.all(promises).then(function() {
-        var withData = nearbyStations.filter(function(s) { return s.data; });
-        nearbyStations = withData;
+        nearbyStations = nearbyStations.filter(function(s) { return s.data; });
         var infoEl = document.getElementById('current-station-info');
-        if (!withData.length) {
+        if (!nearbyStations.length) {
           infoEl.innerHTML = '<span style="color:#ef5350;">No predictions returned for any stations.</span>';
           return;
         }
-        infoEl.innerHTML = '📡 <b>' + withData.length + '</b> NOAA stations loaded. Grid-interpolated current field shown across the area.';
+        infoEl.innerHTML = '📡 <b>' + nearbyStations.length + '</b> NOAA stations loaded. Grid-interpolated current field shown across the area.';
         redrawAllArrows();
         updateSliderLabel(0);
       });
@@ -5453,8 +5436,6 @@ app.get("/forecast", requireAuth, (req, res) => {
       currentMarkers = [];
     }
 
-    // Inverse-distance weighted interpolation of speed + direction at (lat, lon)
-    // Direction is interpolated as a vector to avoid wraparound issues
     function interpolateAt(lat, lon, hourIdx) {
       if (!nearbyStations.length) return null;
       var sumW = 0, vx = 0, vy = 0;
@@ -5465,11 +5446,10 @@ app.get("/forecast", requireAuth, (req, res) => {
         var idx = Math.min(hourIdx, s.data.speeds.length - 1);
         var speed = s.data.speeds[idx] || 0;
         var dir = s.data.dirs[idx] || 0;
-        // ebb = negative speed -> reverse direction
         var actualDir = speed < 0 ? (dir + 180) % 360 : dir;
         var spd = Math.abs(speed);
         var d = haversine(lat, lon, s.lat, s.lng);
-        if (d < 0.05) return { speed: spd, dir: actualDir, exact: true };
+        if (d < 0.05) return { speed: spd, dir: actualDir };
         var w = 1 / Math.pow(d, POWER);
         var rad = actualDir * Math.PI / 180;
         vx += w * spd * Math.sin(rad);
@@ -5480,13 +5460,12 @@ app.get("/forecast", requireAuth, (req, res) => {
       vx /= sumW; vy /= sumW;
       var interpSpeed = Math.sqrt(vx*vx + vy*vy);
       var interpDir = (Math.atan2(vx, vy) * 180 / Math.PI + 360) % 360;
-      return { speed: interpSpeed, dir: interpDir, exact: false };
+      return { speed: interpSpeed, dir: interpDir };
     }
 
     function arrowSizeForZoom() {
       if (!map) return 14;
       var z = map.getZoom();
-      // Smaller at low zoom, larger at high zoom
       if (z <= 9) return 10;
       if (z <= 10) return 12;
       if (z <= 11) return 14;
@@ -5513,7 +5492,6 @@ app.get("/forecast", requireAuth, (req, res) => {
       return '<div style="position:relative;width:' + size + 'px;height:' + size + 'px;opacity:' + opacity + ';pointer-events:none;">' + svg + label + '</div>';
     }
 
-    // Approximate "is over water" check: only true if within LAND_FILTER_KM of any NOAA station
     function isLikelyWater(lat, lon) {
       for (var i = 0; i < nearbyStations.length; i++) {
         var s = nearbyStations[i];
@@ -5527,24 +5505,18 @@ app.get("/forecast", requireAuth, (req, res) => {
       clearCurrentMarkers();
       var hourIdx = sliderHourOffset;
       var size = arrowSizeForZoom();
-
-      // 1) Draw interpolated grid arrows
       var center = mapCenter;
-      // Convert km to degrees: ~111 km per degree latitude; longitude scales by cos(lat)
       var latStep = GRID_SPACING_KM / 111;
       var lonStep = GRID_SPACING_KM / (111 * Math.cos(center.lat * Math.PI / 180));
       var radiusDeg = GRID_RADIUS_KM / 111;
-
       var showGridLabels = map.getZoom() >= 13;
-      var labelExtra = 36; // extra horizontal space for the speed label
+      var labelExtra = 36;
 
       for (var dLat = -radiusDeg; dLat <= radiusDeg; dLat += latStep) {
         for (var dLon = -radiusDeg; dLon <= radiusDeg; dLon += lonStep) {
           var glat = center.lat + dLat;
           var glon = center.lon + dLon;
-          // Skip points outside circular radius
           if (haversine(center.lat, center.lon, glat, glon) > GRID_RADIUS_KM) continue;
-          // Skip points likely on land (>LAND_FILTER_KM from any NOAA water station)
           if (!isLikelyWater(glat, glon)) continue;
           var interp = interpolateAt(glat, glon, hourIdx);
           if (!interp || interp.speed < 0.05) continue;
@@ -5556,7 +5528,6 @@ app.get("/forecast", requireAuth, (req, res) => {
         }
       }
 
-      // 2) Draw real station arrows on top (clickable, slightly larger, always labeled)
       var stationSize = size + 4;
       nearbyStations.forEach(function(s) {
         if (!s.data) return;
@@ -5590,7 +5561,6 @@ app.get("/forecast", requireAuth, (req, res) => {
     window.searchSailingArea = function() {
       var q = document.getElementById('sailing-area-search').value.trim();
       if (!q) return;
-      // Geocode via Nominatim (free, no key)
       fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(q))
         .then(function(r) { return r.json(); })
         .then(function(arr) {
@@ -5610,63 +5580,8 @@ app.get("/forecast", requireAuth, (req, res) => {
       if (e.key === 'Enter') window.searchSailingArea();
     });
 
-    // ============ NWS 7-Day Wind Forecast ============
-    function loadNwsForecast(lat, lon) {
-      var statusEl = document.getElementById('nws-forecast-status');
-      var gridEl = document.getElementById('nws-forecast-grid');
-      statusEl.textContent = 'Loading 7-day forecast for ' + lat.toFixed(2) + ', ' + lon.toFixed(2) + '...';
-      gridEl.innerHTML = '';
-      fetch('https://api.weather.gov/points/' + lat.toFixed(4) + ',' + lon.toFixed(4))
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-          if (!data.properties || !data.properties.forecast) {
-            statusEl.textContent = 'NWS forecast not available for this location (US only).';
-            return;
-          }
-          return fetch(data.properties.forecast);
-        })
-        .then(function(r) { return r ? r.json() : null; })
-        .then(function(data) {
-          if (!data) return;
-          var periods = (data.properties && data.properties.periods) || [];
-          if (!periods.length) { statusEl.textContent = 'No forecast periods returned.'; return; }
-          statusEl.textContent = 'Showing forecast for next ' + Math.min(periods.length, 14) + ' periods (~7 days):';
-          gridEl.innerHTML = periods.slice(0, 14).map(function(p) {
-            var dirDeg = compassToDeg(p.windDirection);
-            var windNum = parseFloat((p.windSpeed || '').split(' ')[0]) || 0;
-            var color = windNum < 8 ? '#4caf50' : windNum < 15 ? '#42a5f5' : windNum < 22 ? '#ff9800' : '#ef5350';
-            return '<div style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:12px;border-left:4px solid ' + color + ';">' +
-              '<div style="font-weight:700;color:#90caf9;font-size:0.88rem;margin-bottom:4px;">' + p.name + '</div>' +
-              '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">' +
-                '<div style="font-size:1.6rem;transform:rotate(' + dirDeg + 'deg);color:#fff;">↓</div>' +
-                '<div><div style="font-size:1.1rem;font-weight:700;color:#fff;">' + (p.windSpeed || '?') + '</div>' +
-                '<div style="font-size:0.78rem;color:#90a4ae;">' + (p.windDirection || '') + '</div></div>' +
-              '</div>' +
-              '<div style="font-size:0.78rem;color:#cfd8dc;">' + (p.shortForecast || '') + '</div>' +
-              '<div style="font-size:0.74rem;color:#78909c;margin-top:4px;">' + p.temperature + '°' + p.temperatureUnit + '</div>' +
-              '</div>';
-          }).join('');
-        })
-        .catch(function(err) {
-          statusEl.textContent = 'Error loading NWS forecast: ' + err.message;
-        });
-    }
-
-    function compassToDeg(c) {
-      var map = {N:0,NNE:22.5,NE:45,ENE:67.5,E:90,ESE:112.5,SE:135,SSE:157.5,S:180,SSW:202.5,SW:225,WSW:247.5,W:270,WNW:292.5,NW:315,NNW:337.5};
-      return map[c] || 0;
-    }
-
-    // Expose for the original forecast IIFE to call after it gets coordinates
-    window.initCurrentMapAt = function(lat, lon) {
-      initCurrentMap(lat, lon);
-    };
-
-    // Fallback: if the original forecast flow hasn't called us within 8s
-    // (e.g. user denied geolocation), initialize with the default location
-    setTimeout(function() {
-      if (!map) initCurrentMap(mapCenter.lat, mapCenter.lon);
-    }, 8000);
+    // Initialize immediately with Miami default — no geolocation prompt
+    initCurrentMap(mapCenter.lat, mapCenter.lon);
   })();
   </script>`, req.session.user, lang));
 });
