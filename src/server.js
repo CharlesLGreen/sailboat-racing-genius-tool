@@ -9174,7 +9174,7 @@ function profilePage(userData, success, userBoats) {
           <input type="text" id="add-boat-num" placeholder="e.g. 31847" style="padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">
         </div>
         <div style="flex:1;min-width:100px;">
-          <label style="font-size:0.8rem;color:#555;font-weight:600;">Nickname <span style="font-weight:400;color:#94a3b8;">(optional)</span></label>
+          <label style="font-size:0.8rem;color:#555;font-weight:600;">Name <span style="font-weight:400;color:#94a3b8;">(optional)</span></label>
           <input type="text" id="add-boat-nick" placeholder="e.g. Race Boat" style="padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">
         </div>
         <button type="button" id="add-boat-btn" onclick="addBoat()" style="padding:8px 18px;border-radius:8px;font-size:0.9rem;font-weight:700;cursor:pointer;border:2px solid #0b3d6e;background:#0b3d6e;color:#fff;white-space:nowrap;">+ Add Boat</button>
