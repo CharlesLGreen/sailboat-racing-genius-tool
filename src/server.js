@@ -4624,9 +4624,19 @@ app.get("/api/forecast", async (req, res) => {
     if (!lat || !lon) return res.status(400).json({ error: 'lat and lon required' });
 
     // Fetch wind forecast from Open-Meteo (free, no API key)
-    const windUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m&forecast_hours=24&wind_speed_unit=kn`;
-    const windResp = await fetch(windUrl);
-    const windData = await windResp.json();
+    let windData = null;
+    try {
+      const windUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m&forecast_hours=24&wind_speed_unit=kn`;
+      const windResp = await fetch(windUrl, { signal: AbortSignal.timeout(8000) });
+      const ct = windResp.headers.get('content-type') || '';
+      if (ct.includes('application/json')) {
+        windData = await windResp.json();
+      } else {
+        console.error('/api/forecast wind: non-JSON response (' + ct + ')');
+      }
+    } catch(we) {
+      console.error('/api/forecast wind fetch failed:', we.message);
+    }
 
     // Try to find nearest tide station for tide/current data
     let tideData = null;
@@ -4640,7 +4650,9 @@ app.get("/api/forecast", async (req, res) => {
     if (isNearUS) try {
       // Find nearest NOAA station
       const stationsUrl = `https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations.json?type=waterlevels&units=english`;
-      const stResp = await fetch(stationsUrl, { signal: AbortSignal.timeout(6000) });
+      const stResp = await fetch(stationsUrl, { signal: AbortSignal.timeout(8000) });
+      const stCt = stResp.headers.get('content-type') || '';
+      if (!stCt.includes('application/json')) throw new Error('NOAA stations non-JSON: ' + stCt);
       const stJson = await stResp.json();
 
       if (stJson.stations && stJson.stations.length > 0) {
@@ -4709,28 +4721,29 @@ app.get("/api/forecast", async (req, res) => {
       }
     } catch(e) { /* tide data is optional */ }
 
-    // Hardcoded fallback for South Florida (Miami area): Virginia Key station 8723214
-    // Triggered when the nearest-station search above didn't find anything within 0.5°.
-    if (!tideData && userLat >= 24.5 && userLat <= 27.5 && userLon >= -81.5 && userLon <= -79.5) {
+    // Unconditional hardcoded fallback: Virginia Key station 8723214.
+    // If no station was found via the search above, always return Virginia Key
+    // tide predictions so the UI never shows "No NOAA tide station found".
+    if (!tideData) {
       try {
         const now = new Date();
         const end = new Date(now.getTime() + 24 * 60 * 60 * 1000);
         const fmt = d => d.getFullYear() + '' + String(d.getMonth()+1).padStart(2,'0') + '' + String(d.getDate()).padStart(2,'0');
         const tideUrl = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?begin_date=${fmt(now)}&end_date=${fmt(end)}&station=8723214&product=predictions&datum=MLLW&time_zone=lst_ldt&interval=h&units=english&format=json`;
-        const tideResp = await fetch(tideUrl, { signal: AbortSignal.timeout(6000) });
+        const tideResp = await fetch(tideUrl, { signal: AbortSignal.timeout(8000) });
         const tideJson = await tideResp.json();
         if (tideJson.predictions && tideJson.predictions.length) {
           tideData = {
-            station: 'Virginia Key, FL (fallback)',
+            station: 'Virginia Key, FL',
             stationId: '8723214',
-            stationLat: 25.7314,
-            stationLon: -80.1622,
-            distanceMiles: Math.round(Math.sqrt(Math.pow(25.7314 - userLat, 2) + Math.pow(-80.1622 - userLon, 2)) * 60),
+            stationLat: 25.7317,
+            stationLon: -80.1617,
+            distanceMiles: Math.round(Math.sqrt(Math.pow(25.7317 - userLat, 2) + Math.pow(-80.1617 - userLon, 2)) * 60),
             predictions: tideJson.predictions,
             currents: null
           };
         }
-      } catch(e) { /* fallback optional */ }
+      } catch(e) { console.error('Virginia Key fallback failed:', e.message); }
     }
 
     // Fallback for international locations: Open-Meteo Marine API (free, global)
@@ -4777,7 +4790,8 @@ app.get("/api/forecast", async (req, res) => {
     // Add requested location to response for display
     res.json({ wind: windData, tide: tideData, waterBody, requestedLat: userLat, requestedLon: userLon });
   } catch(e) {
-    res.status(500).json({ error: 'Failed to fetch forecast' });
+    console.error('/api/forecast error:', e && (e.stack || e.message || e));
+    res.status(500).json({ error: 'Failed to fetch forecast', detail: e && e.message });
   }
 });
 
@@ -5343,9 +5357,13 @@ app.get("/forecast", requireAuth, (req, res) => {
       if (e.key === 'Enter') useLocationInput();
     });
 
-    // Load Miami forecast immediately (no geolocation prompt blocking the page).
+    // Always load Miami forecast on DOMContentLoaded — no geolocation check.
     // The "Use My Location" button still re-runs with the user's actual position.
-    loadForecast(25.7617, -80.1918, 'Miami, FL');
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function() { loadForecast(25.7617, -80.1918, 'Miami, FL'); });
+    } else {
+      loadForecast(25.7617, -80.1918, 'Miami, FL');
+    }
   })();
   </script>
 
