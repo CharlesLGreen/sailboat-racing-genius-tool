@@ -4847,6 +4847,44 @@ app.get("/forecast", requireAuth, (req, res) => {
     <div id="no-tide-msg" style="display:none;background:white;border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,0.1);text-align:center;color:#888;">
       ${lang === 'es' ? 'No se encontró estación de mareas NOAA cerca de esta ubicación.' : lang === 'it' ? 'Nessuna stazione di marea NOAA trovata nelle vicinanze.' : lang === 'pt' ? 'Nenhuma estação de marés NOAA encontrada perto desta localização.' : 'No NOAA tide station found within range of this location.'}
     </div>
+
+    <!-- ============================================ -->
+    <!-- SAILING AREA CURRENT MAP (NOAA CO-OPS)       -->
+    <!-- ============================================ -->
+    <div style="background:#0b1a2b;color:#e8eaf0;border-radius:14px;padding:20px;margin-top:24px;margin-bottom:20px;box-shadow:0 2px 12px rgba(0,0,0,0.15);">
+      <h3 style="color:#90caf9;margin:0 0 14px;display:flex;align-items:center;gap:8px;">🌊 Sailing Area Current Map</h3>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;align-items:center;">
+        <input type="text" id="sailing-area-search" placeholder="Search a sailing area (e.g. Biscayne Bay)" style="flex:1;min-width:220px;padding:9px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.08);color:#fff;font-size:0.92rem;">
+        <button onclick="searchSailingArea()" style="padding:9px 18px;border-radius:8px;border:none;background:#1a6fb5;color:#fff;font-weight:700;cursor:pointer;">Search</button>
+        <button onclick="useGeoForCurrentMap()" style="padding:9px 18px;border-radius:8px;border:none;background:#0b3d6e;color:#fff;font-weight:700;cursor:pointer;">📍 My Location</button>
+      </div>
+      <div id="current-map" style="height:420px;border-radius:10px;background:#06101a;"></div>
+      <div id="current-station-info" style="margin-top:10px;font-size:0.85rem;color:#90caf9;"></div>
+      <div style="margin-top:14px;background:rgba(255,255,255,0.05);border-radius:10px;padding:14px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <strong style="color:#90caf9;font-size:0.88rem;">Forecast Time:</strong>
+          <span id="current-time-label" style="color:#fff;font-weight:700;font-size:0.95rem;">Now</span>
+        </div>
+        <input type="range" id="current-time-slider" min="0" max="24" value="0" step="1" style="width:100%;">
+        <div style="display:flex;justify-content:space-between;font-size:0.75rem;color:#78909c;margin-top:4px;">
+          <span>Now</span><span>+6h</span><span>+12h</span><span>+18h</span><span>+24h</span>
+        </div>
+        <div style="display:flex;gap:14px;margin-top:12px;font-size:0.78rem;flex-wrap:wrap;">
+          <span style="display:flex;align-items:center;gap:6px;"><span style="display:inline-block;width:14px;height:14px;background:#42a5f5;border-radius:3px;"></span>Light (&lt; 0.5 kts)</span>
+          <span style="display:flex;align-items:center;gap:6px;"><span style="display:inline-block;width:14px;height:14px;background:#ffd54f;border-radius:3px;"></span>Moderate (0.5–1.5 kts)</span>
+          <span style="display:flex;align-items:center;gap:6px;"><span style="display:inline-block;width:14px;height:14px;background:#ef5350;border-radius:3px;"></span>Strong (&gt; 1.5 kts)</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================ -->
+    <!-- 7-DAY WIND FORECAST (National Weather Service) -->
+    <!-- ============================================ -->
+    <div style="background:#0b1a2b;color:#e8eaf0;border-radius:14px;padding:20px;margin-bottom:20px;box-shadow:0 2px 12px rgba(0,0,0,0.15);">
+      <h3 style="color:#90caf9;margin:0 0 14px;display:flex;align-items:center;gap:8px;">🌬️ 7-Day Wind Forecast <span style="font-size:0.7rem;color:#78909c;font-weight:400;">via NOAA NWS</span></h3>
+      <div id="nws-forecast-status" style="font-size:0.85rem;color:#78909c;margin-bottom:10px;">Loading forecast for map location...</div>
+      <div id="nws-forecast-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px;"></div>
+    </div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
@@ -5291,6 +5329,226 @@ app.get("/forecast", requireAuth, (req, res) => {
 
     // Auto-detect location on page load
     useGeoLocation();
+  })();
+  </script>
+
+  <!-- Leaflet for the Sailing Area Current Map -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+  (function() {
+    var map = null;
+    var currentMarkers = [];
+    var nearestStation = null;
+    var stationData = null; // { times: [...], speeds: [...], dirs: [...] }
+    var sliderHourOffset = 0;
+    var mapCenter = { lat: 25.7617, lon: -80.1918 }; // Miami default
+
+    function initCurrentMap(lat, lon) {
+      mapCenter = { lat: lat, lon: lon };
+      if (!map) {
+        map = L.map('current-map').setView([lat, lon], 11);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '© OpenStreetMap', maxZoom: 19
+        }).addTo(map);
+      } else {
+        map.setView([lat, lon], 11);
+      }
+      findNearestCurrentStation(lat, lon);
+      loadNwsForecast(lat, lon);
+    }
+
+    // NOAA CO-OPS: find nearest active current station
+    function findNearestCurrentStation(lat, lon) {
+      var infoEl = document.getElementById('current-station-info');
+      infoEl.textContent = 'Searching for nearest NOAA current station...';
+      // CO-OPS metadata: list of all current stations
+      fetch('https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations.json?type=currentpredictions')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var stations = data.stations || [];
+          if (!stations.length) { infoEl.textContent = 'No current stations available.'; return; }
+          var nearest = null, minDist = Infinity;
+          stations.forEach(function(s) {
+            var d = haversine(lat, lon, s.lat, s.lng);
+            if (d < minDist) { minDist = d; nearest = s; }
+          });
+          if (!nearest || minDist > 200) {
+            infoEl.textContent = 'No NOAA current station within 200 km of this location.';
+            clearCurrentMarkers();
+            return;
+          }
+          nearestStation = nearest;
+          infoEl.innerHTML = '📡 Nearest station: <b>' + nearest.name + '</b> (' + nearest.id + ') — ' + Math.round(minDist) + ' km away';
+          fetchStationCurrents(nearest);
+        })
+        .catch(function(err) {
+          infoEl.textContent = 'Error fetching NOAA stations: ' + err.message;
+        });
+    }
+
+    function haversine(lat1, lon1, lat2, lon2) {
+      var R = 6371;
+      var dLat = (lat2 - lat1) * Math.PI / 180;
+      var dLon = (lon2 - lon1) * Math.PI / 180;
+      var a = Math.sin(dLat/2)*Math.sin(dLat/2) +
+              Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) *
+              Math.sin(dLon/2)*Math.sin(dLon/2);
+      return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    }
+
+    function fetchStationCurrents(station) {
+      // Get next 24 hours of current predictions, 1-hour interval
+      var now = new Date();
+      var pad = function(n) { return String(n).padStart(2,'0'); };
+      var fmtDate = function(d) { return d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()); };
+      var endDate = new Date(now.getTime() + 24*3600*1000);
+      var url = 'https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?' +
+        'product=currents_predictions&application=Snipeovation&format=json&units=english&time_zone=lst_ldt' +
+        '&interval=h&station=' + station.id +
+        '&begin_date=' + fmtDate(now) + '&end_date=' + fmtDate(endDate);
+      fetch(url)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var preds = (data.current_predictions && data.current_predictions.cp) || [];
+          if (!preds.length) {
+            document.getElementById('current-station-info').innerHTML += ' <span style="color:#ef5350;">— no predictions returned</span>';
+            return;
+          }
+          stationData = {
+            times: preds.map(function(p) { return p.Time; }),
+            speeds: preds.map(function(p) { return parseFloat(p.Velocity_Major) || parseFloat(p.Speed) || 0; }),
+            dirs: preds.map(function(p) { return parseFloat(p.meanFloodDir) || parseFloat(p.Direction) || 0; })
+          };
+          // Place a marker at the station location
+          drawCurrentArrow(station.lat, station.lng, 0);
+          updateSliderLabel(0);
+        })
+        .catch(function(err) {
+          document.getElementById('current-station-info').innerHTML += ' <span style="color:#ef5350;">— ' + err.message + '</span>';
+        });
+    }
+
+    function clearCurrentMarkers() {
+      currentMarkers.forEach(function(m) { map.removeLayer(m); });
+      currentMarkers = [];
+    }
+
+    function drawCurrentArrow(lat, lon, hourIdx) {
+      if (!stationData) return;
+      clearCurrentMarkers();
+      var speed = stationData.speeds[hourIdx] || 0;
+      var dir = stationData.dirs[hourIdx] || 0;
+      var absSpeed = Math.abs(speed);
+      var color = absSpeed < 0.5 ? '#42a5f5' : absSpeed < 1.5 ? '#ffd54f' : '#ef5350';
+      var size = Math.min(60, 20 + absSpeed * 18);
+      // Negative speed in NOAA = ebb (opposite direction)
+      var rotateDeg = speed < 0 ? (dir + 180) % 360 : dir;
+      var html = '<div style="transform:rotate(' + rotateDeg + 'deg);transform-origin:center;font-size:' + size + 'px;color:' + color + ';line-height:1;text-shadow:0 0 6px rgba(0,0,0,0.7);animation:pulse 2s infinite;">➤</div>';
+      var icon = L.divIcon({ html: html, className: '', iconSize: [size, size], iconAnchor: [size/2, size/2] });
+      var marker = L.marker([lat, lon], { icon: icon })
+        .bindPopup('<b>' + (nearestStation ? nearestStation.name : '') + '</b><br>Speed: ' + absSpeed.toFixed(2) + ' kts<br>Direction: ' + Math.round(dir) + '°<br>' + (speed < 0 ? 'EBB' : 'FLOOD'))
+        .addTo(map);
+      currentMarkers.push(marker);
+    }
+
+    function updateSliderLabel(hourIdx) {
+      var label = document.getElementById('current-time-label');
+      if (hourIdx === 0) { label.textContent = 'Now'; return; }
+      var t = new Date(Date.now() + hourIdx * 3600 * 1000);
+      label.textContent = '+' + hourIdx + 'h (' + t.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) + ')';
+    }
+
+    document.getElementById('current-time-slider').addEventListener('input', function(e) {
+      sliderHourOffset = parseInt(e.target.value, 10);
+      updateSliderLabel(sliderHourOffset);
+      if (nearestStation && stationData) {
+        drawCurrentArrow(nearestStation.lat, nearestStation.lng, Math.min(sliderHourOffset, stationData.speeds.length - 1));
+      }
+    });
+
+    window.searchSailingArea = function() {
+      var q = document.getElementById('sailing-area-search').value.trim();
+      if (!q) return;
+      // Geocode via Nominatim (free, no key)
+      fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(q))
+        .then(function(r) { return r.json(); })
+        .then(function(arr) {
+          if (!arr.length) { alert('Location not found.'); return; }
+          initCurrentMap(parseFloat(arr[0].lat), parseFloat(arr[0].lon));
+        });
+    };
+
+    window.useGeoForCurrentMap = function() {
+      if (!navigator.geolocation) { alert('Geolocation not supported'); return; }
+      navigator.geolocation.getCurrentPosition(function(pos) {
+        initCurrentMap(pos.coords.latitude, pos.coords.longitude);
+      }, function() { alert('Could not get your location'); });
+    };
+
+    document.getElementById('sailing-area-search').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') window.searchSailingArea();
+    });
+
+    // ============ NWS 7-Day Wind Forecast ============
+    function loadNwsForecast(lat, lon) {
+      var statusEl = document.getElementById('nws-forecast-status');
+      var gridEl = document.getElementById('nws-forecast-grid');
+      statusEl.textContent = 'Loading 7-day forecast for ' + lat.toFixed(2) + ', ' + lon.toFixed(2) + '...';
+      gridEl.innerHTML = '';
+      fetch('https://api.weather.gov/points/' + lat.toFixed(4) + ',' + lon.toFixed(4))
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (!data.properties || !data.properties.forecast) {
+            statusEl.textContent = 'NWS forecast not available for this location (US only).';
+            return;
+          }
+          return fetch(data.properties.forecast);
+        })
+        .then(function(r) { return r ? r.json() : null; })
+        .then(function(data) {
+          if (!data) return;
+          var periods = (data.properties && data.properties.periods) || [];
+          if (!periods.length) { statusEl.textContent = 'No forecast periods returned.'; return; }
+          statusEl.textContent = 'Showing forecast for next ' + Math.min(periods.length, 14) + ' periods (~7 days):';
+          gridEl.innerHTML = periods.slice(0, 14).map(function(p) {
+            var dirDeg = compassToDeg(p.windDirection);
+            var windNum = parseFloat((p.windSpeed || '').split(' ')[0]) || 0;
+            var color = windNum < 8 ? '#4caf50' : windNum < 15 ? '#42a5f5' : windNum < 22 ? '#ff9800' : '#ef5350';
+            return '<div style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:12px;border-left:4px solid ' + color + ';">' +
+              '<div style="font-weight:700;color:#90caf9;font-size:0.88rem;margin-bottom:4px;">' + p.name + '</div>' +
+              '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">' +
+                '<div style="font-size:1.6rem;transform:rotate(' + dirDeg + 'deg);color:#fff;">↓</div>' +
+                '<div><div style="font-size:1.1rem;font-weight:700;color:#fff;">' + (p.windSpeed || '?') + '</div>' +
+                '<div style="font-size:0.78rem;color:#90a4ae;">' + (p.windDirection || '') + '</div></div>' +
+              '</div>' +
+              '<div style="font-size:0.78rem;color:#cfd8dc;">' + (p.shortForecast || '') + '</div>' +
+              '<div style="font-size:0.74rem;color:#78909c;margin-top:4px;">' + p.temperature + '°' + p.temperatureUnit + '</div>' +
+              '</div>';
+          }).join('');
+        })
+        .catch(function(err) {
+          statusEl.textContent = 'Error loading NWS forecast: ' + err.message;
+        });
+    }
+
+    function compassToDeg(c) {
+      var map = {N:0,NNE:22.5,NE:45,ENE:67.5,E:90,ESE:112.5,SE:135,SSE:157.5,S:180,SSW:202.5,SW:225,WSW:247.5,W:270,WNW:292.5,NW:315,NNW:337.5};
+      return map[c] || 0;
+    }
+
+    // Auto-init with geolocation, fallback to default
+    setTimeout(function() {
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(function(pos) {
+          initCurrentMap(pos.coords.latitude, pos.coords.longitude);
+        }, function() {
+          initCurrentMap(mapCenter.lat, mapCenter.lon);
+        }, { timeout: 6000 });
+      } else {
+        initCurrentMap(mapCenter.lat, mapCenter.lon);
+      }
+    }, 300);
   })();
   </script>`, req.session.user, lang));
 });
