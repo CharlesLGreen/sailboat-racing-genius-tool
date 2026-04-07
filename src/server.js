@@ -4622,27 +4622,72 @@ app.get("/api/forecast", async (req, res) => {
   try {
     const { lat, lon } = req.query;
     if (!lat || !lon) return res.status(400).json({ error: 'lat and lon required' });
+    const userLat = parseFloat(lat);
+    const userLon = parseFloat(lon);
 
-    // Fetch wind forecast from Open-Meteo (free, no API key)
+    // Fetch wind forecast from NOAA NWS api.weather.gov (US locations).
+    // This is the same API used for the 7-day forecast — confirmed reachable
+    // from Railway. Convert NWS hourly periods into the Open-Meteo response
+    // shape that the existing renderWind() frontend expects.
     let windData = null;
+    const compassToDegMap = { N:0,NNE:22.5,NE:45,ENE:67.5,E:90,ESE:112.5,SE:135,SSE:157.5,S:180,SSW:202.5,SW:225,WSW:247.5,W:270,WNW:292.5,NW:315,NNW:337.5 };
     try {
-      const windUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m&forecast_hours=24&wind_speed_unit=kn`;
-      const windResp = await fetch(windUrl, { signal: AbortSignal.timeout(12000) });
-      console.log('/api/forecast wind status:', windResp.status, 'ct:', windResp.headers.get('content-type'));
-      const windText = await windResp.text();
-      try {
-        windData = JSON.parse(windText);
-      } catch(pe) {
-        console.error('/api/forecast wind JSON parse failed. Body head:', windText.slice(0, 200));
+      const pointsResp = await fetch(`https://api.weather.gov/points/${userLat.toFixed(4)},${userLon.toFixed(4)}`, {
+        signal: AbortSignal.timeout(10000),
+        headers: { 'User-Agent': 'Snipeovation/1.0 (snipeovation.com)', 'Accept': 'application/geo+json' }
+      });
+      console.log('/api/forecast NWS points status:', pointsResp.status);
+      const pointsJson = await pointsResp.json();
+      const hourlyUrl = pointsJson && pointsJson.properties && pointsJson.properties.forecastHourly;
+      if (hourlyUrl) {
+        const hourlyResp = await fetch(hourlyUrl, {
+          signal: AbortSignal.timeout(10000),
+          headers: { 'User-Agent': 'Snipeovation/1.0 (snipeovation.com)', 'Accept': 'application/geo+json' }
+        });
+        console.log('/api/forecast NWS hourly status:', hourlyResp.status);
+        const hourlyJson = await hourlyResp.json();
+        const periods = (hourlyJson && hourlyJson.properties && hourlyJson.properties.periods) || [];
+        if (periods.length) {
+          const next24 = periods.slice(0, 24);
+          const time = next24.map(p => p.startTime);
+          const speeds = next24.map(p => {
+            const mph = parseFloat((p.windSpeed || '').split(' ')[0]) || 0;
+            return Math.round(mph * 0.868976 * 10) / 10; // mph -> knots
+          });
+          const dirs = next24.map(p => compassToDegMap[p.windDirection] !== undefined ? compassToDegMap[p.windDirection] : 0);
+          // NWS hourly doesn't expose gusts; use a 1.3x estimate so the chart still shows the gust line
+          const gusts = speeds.map(s => Math.round(s * 1.3 * 10) / 10);
+          windData = {
+            hourly: {
+              time: time,
+              wind_speed_10m: speeds,
+              wind_direction_10m: dirs,
+              wind_gusts_10m: gusts
+            }
+          };
+        }
+      } else {
+        console.error('/api/forecast NWS points: no forecastHourly URL (non-US location?)');
       }
     } catch(we) {
-      console.error('/api/forecast wind fetch failed:', we.message);
+      console.error('/api/forecast NWS wind fetch failed:', we.message);
+    }
+
+    // Fallback to Open-Meteo if NWS didn't work (e.g. non-US location)
+    if (!windData) {
+      try {
+        const windUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m&forecast_hours=24&wind_speed_unit=kn`;
+        const windResp = await fetch(windUrl, { signal: AbortSignal.timeout(10000) });
+        const windText = await windResp.text();
+        try { windData = JSON.parse(windText); }
+        catch(pe) { console.error('/api/forecast Open-Meteo fallback parse failed:', windText.slice(0, 200)); }
+      } catch(we) {
+        console.error('/api/forecast Open-Meteo fallback fetch failed:', we.message);
+      }
     }
 
     // Try to find nearest tide station for tide/current data
     let tideData = null;
-    const userLat = parseFloat(lat);
-    const userLon = parseFloat(lon);
 
     // Only try NOAA for locations roughly in US/territories waters
     // US bounds: lat 17-72, lon -180 to -60 (includes Alaska, Hawaii, PR, USVI, Guam)
@@ -5367,12 +5412,22 @@ app.get("/forecast", requireAuth, (req, res) => {
       if (e.key === 'Enter') useLocationInput();
     });
 
-    // Always load Miami forecast on DOMContentLoaded — no geolocation check.
-    // The "Use My Location" button still re-runs with the user's actual position.
+    // Try GPS first; fall back to Miami if geolocation is denied / unavailable.
+    function autoLoad() {
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          function(pos) { loadForecast(pos.coords.latitude, pos.coords.longitude, 'Your location'); },
+          function() { loadForecast(25.7617, -80.1918, 'Miami, FL'); },
+          { timeout: 6000, maximumAge: 600000 }
+        );
+      } else {
+        loadForecast(25.7617, -80.1918, 'Miami, FL');
+      }
+    }
     if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', function() { loadForecast(25.7617, -80.1918, 'Miami, FL'); });
+      document.addEventListener('DOMContentLoaded', autoLoad);
     } else {
-      loadForecast(25.7617, -80.1918, 'Miami, FL');
+      autoLoad();
     }
   })();
   </script>
