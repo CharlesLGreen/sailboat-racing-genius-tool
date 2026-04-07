@@ -5442,11 +5442,11 @@ app.get("/forecast", requireAuth, (req, res) => {
     var nearbyStations = [];
     var sliderHourOffset = 0;
     var mapCenter = { lat: 25.7617, lon: -80.1918 }; // Miami default
-    var SEARCH_RADIUS_KM = 50;
+    var SEARCH_RADIUS_KM = 60;
     var MAX_STATIONS = 12;
     var GRID_SPACING_KM = 2;
     var GRID_RADIUS_KM = 40;
-    var LAND_FILTER_KM = 12;
+    var LAND_FILTER_KM = 8;
 
     function haversine(lat1, lon1, lat2, lon2) {
       var R = 6371;
@@ -5595,7 +5595,7 @@ app.get("/forecast", requireAuth, (req, res) => {
         '</svg>';
       var label = '';
       if (showLabel) {
-        label = '<span style="position:absolute;left:' + (size + 2) + 'px;top:50%;transform:translateY(-50%);font-size:10px;font-weight:700;color:' + color + ';text-shadow:0 0 2px rgba(0,0,0,0.95),0 0 2px rgba(0,0,0,0.95);white-space:nowrap;font-family:sans-serif;">' + speed.toFixed(1) + ' kt</span>';
+        label = '<span style="position:absolute;left:' + (size + 2) + 'px;top:50%;transform:translateY(-50%);font-size:13px;font-weight:bold;color:' + color + ';background:#fff;padding:2px;border-radius:3px;border:1px solid ' + color + ';white-space:nowrap;font-family:sans-serif;">' + speed.toFixed(1) + ' kt</span>';
       }
       return '<div style="position:relative;width:' + size + 'px;height:' + size + 'px;opacity:' + opacity + ';pointer-events:none;">' + svg + label + '</div>';
     }
@@ -5617,7 +5617,7 @@ app.get("/forecast", requireAuth, (req, res) => {
       var latStep = GRID_SPACING_KM / 111;
       var lonStep = GRID_SPACING_KM / (111 * Math.cos(center.lat * Math.PI / 180));
       var radiusDeg = GRID_RADIUS_KM / 111;
-      var showGridLabels = map.getZoom() >= 13;
+      var showGridLabels = true;
       var labelExtra = 36;
 
       for (var dLat = -radiusDeg; dLat <= radiusDeg; dLat += latStep) {
