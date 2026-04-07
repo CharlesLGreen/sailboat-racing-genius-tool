@@ -7892,7 +7892,7 @@ function coachingPage(raceLogs, uploads, pastReports, highlightUploadId, error, 
         <div style="font-size:2rem;flex-shrink:0;">&#128225;</div>
         <div style="flex:1;min-width:200px;">
           <p style="color:#0b3d6e;font-weight:700;font-size:1.05rem;margin:0 0 6px;">Get deeper coaching with Vakaros</p>
-          <p style="color:#555;font-size:0.9rem;margin:0 0 10px;">If you use a Vakaros Atlas, share your sessions directly to Snipeovation after each sail. Your coach will analyze speed, heel angle, VMG, tacking efficiency, and trends across every session.</p>
+          <p style="color:#555;font-size:0.9rem;margin:0 0 10px;">If you use a Vakaros Atlas or Edge, share your sessions directly to Snipeovation after each sail. Your coach will analyze speed, heel angle, VMG, tacking efficiency, and trends across every session.</p>
           <div style="background:#fff;border:1px solid #d0e2f7;border-radius:10px;padding:12px 14px;font-size:0.85rem;color:#444;margin-bottom:10px;">
             <strong>How it works:</strong> After sailing, open Vakaros Connect &rarr; Sessions &rarr; Export &rarr; Share &rarr; choose Snipeovation. That's it &mdash; your data flows into your next coaching report automatically.
           </div>
