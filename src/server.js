@@ -5442,7 +5442,7 @@ app.get("/forecast", requireAuth, (req, res) => {
     var MAX_STATIONS = 30;
     var GRID_SPACING_KM = 2;
     var GRID_RADIUS_KM = 120;
-    var LAND_FILTER_KM = 15;
+    var LAND_FILTER_KM = 8;
 
     function haversine(lat1, lon1, lat2, lon2) {
       var R = 6371;
