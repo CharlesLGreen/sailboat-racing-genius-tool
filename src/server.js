@@ -4826,20 +4826,20 @@ app.get("/forecast", requireAuth, (req, res) => {
     </div>
 
     <!-- Wind Forecast Chart -->
-    <div id="wind-section" style="display:none;background:white;border-radius:12px;padding:20px;margin-bottom:20px;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
+    <div id="wind-section" style="background:white;border-radius:12px;padding:20px;margin-bottom:20px;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
       <h3 style="color:#0b3d6e;margin-top:0;">🌬️ ${L('windForecast')}</h3>
       <canvas id="wind-chart" height="280"></canvas>
       <div id="wind-detail-table" style="margin-top:18px;overflow-x:auto;"></div>
     </div>
 
     <!-- Wind Direction Compass Chart -->
-    <div id="wind-dir-section" style="display:none;background:white;border-radius:12px;padding:20px;margin-bottom:20px;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
+    <div id="wind-dir-section" style="background:white;border-radius:12px;padding:20px;margin-bottom:20px;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
       <h3 style="color:#0b3d6e;margin-top:0;">🧭 ${lang === 'es' ? 'Dirección del Viento por Hora' : lang === 'it' ? 'Direzione del Vento per Ora' : lang === 'pt' ? 'Direção do Vento por Hora' : 'Hourly Wind Direction'}</h3>
       <canvas id="wind-dir-chart" height="200"></canvas>
     </div>
 
     <!-- Tide/Current Chart -->
-    <div id="tide-section" style="display:none;background:white;border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
+    <div id="tide-section" style="background:white;border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
       <h3 style="color:#0b3d6e;margin-top:0;">🌊 ${L('tideForecast')}</h3>
       <div id="tide-station" style="color:#666;font-size:0.85rem;margin-bottom:10px;"></div>
       <canvas id="tide-chart" height="300"></canvas>
@@ -5332,8 +5332,9 @@ app.get("/forecast", requireAuth, (req, res) => {
       if (e.key === 'Enter') useLocationInput();
     });
 
-    // Auto-detect location on page load
-    useGeoLocation();
+    // Load Miami forecast immediately on page load (no geolocation wait).
+    // Users can click "Use My Location" to switch to their actual coordinates.
+    loadForecast(25.7617, -80.1918, 'Miami, FL');
   })();
   </script>
 
