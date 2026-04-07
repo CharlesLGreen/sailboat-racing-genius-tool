@@ -5345,8 +5345,8 @@ app.get("/forecast", requireAuth, (req, res) => {
     var SEARCH_RADIUS_KM = 50;
     var MAX_STATIONS = 12;        // limit API calls per area
     var GRID_SPACING_KM = 2;      // ~2km grid for interpolation
-    var GRID_RADIUS_KM = 25;      // build grid within this radius of map center
-    var LAND_FILTER_KM = 6;       // skip grid points >6km from any NOAA station (likely on land)
+    var GRID_RADIUS_KM = 40;      // build grid within this radius of map center
+    var LAND_FILTER_KM = 12;      // skip grid points >12km from any NOAA station (likely on land)
 
     function initCurrentMap(lat, lon) {
       mapCenter = { lat: lat, lon: lon };
@@ -5489,20 +5489,22 @@ app.get("/forecast", requireAuth, (req, res) => {
       return 24;
     }
 
-    function makeArrowHtml(speed, dir, size, isStation) {
+    function makeArrowHtml(speed, dir, size, isStation, showLabel) {
       var color = speed < 0.5 ? '#42a5f5' : speed < 1.5 ? '#ffd54f' : '#ef5350';
       var opacity = isStation ? 1 : 0.85;
       var sw = Math.max(1.5, size * 0.13);
       var stationStroke = isStation ? ' stroke="#0b1a2b" stroke-width="0.8"' : '';
-      // Arrow points "up" (north). Tail length = 2× arrowhead length.
-      // Arrowhead: y=0 to y=size/3 (length size/3). Tail: y=size/3 to y=size (length 2*size/3).
       var cx = size / 2;
       var svg = '<svg width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '" ' +
         'style="transform:rotate(' + dir + 'deg);transform-origin:center;display:block;overflow:visible;filter:drop-shadow(0 0 1.5px rgba(0,0,0,0.85));">' +
         '<line x1="' + cx + '" y1="' + size + '" x2="' + cx + '" y2="' + (size/3) + '" stroke="' + color + '" stroke-width="' + sw + '" stroke-linecap="round"/>' +
         '<polygon points="' + cx + ',0 ' + (size*0.22) + ',' + (size/3) + ' ' + (size*0.78) + ',' + (size/3) + '" fill="' + color + '"' + stationStroke + '/>' +
         '</svg>';
-      return '<div style="opacity:' + opacity + ';pointer-events:none;">' + svg + '</div>';
+      var label = '';
+      if (showLabel) {
+        label = '<span style="position:absolute;left:' + (size + 2) + 'px;top:50%;transform:translateY(-50%);font-size:10px;font-weight:700;color:' + color + ';text-shadow:0 0 2px rgba(0,0,0,0.95),0 0 2px rgba(0,0,0,0.95);white-space:nowrap;font-family:sans-serif;">' + speed.toFixed(1) + ' kt</span>';
+      }
+      return '<div style="position:relative;width:' + size + 'px;height:' + size + 'px;opacity:' + opacity + ';pointer-events:none;">' + svg + label + '</div>';
     }
 
     // Approximate "is over water" check: only true if within LAND_FILTER_KM of any NOAA station
@@ -5527,6 +5529,9 @@ app.get("/forecast", requireAuth, (req, res) => {
       var lonStep = GRID_SPACING_KM / (111 * Math.cos(center.lat * Math.PI / 180));
       var radiusDeg = GRID_RADIUS_KM / 111;
 
+      var showGridLabels = map.getZoom() >= 13;
+      var labelExtra = 36; // extra horizontal space for the speed label
+
       for (var dLat = -radiusDeg; dLat <= radiusDeg; dLat += latStep) {
         for (var dLon = -radiusDeg; dLon <= radiusDeg; dLon += lonStep) {
           var glat = center.lat + dLat;
@@ -5537,14 +5542,15 @@ app.get("/forecast", requireAuth, (req, res) => {
           if (!isLikelyWater(glat, glon)) continue;
           var interp = interpolateAt(glat, glon, hourIdx);
           if (!interp || interp.speed < 0.05) continue;
-          var html = makeArrowHtml(interp.speed, interp.dir, size, false);
-          var icon = L.divIcon({ html: html, className: '', iconSize: [size, size], iconAnchor: [size/2, size/2] });
+          var html = makeArrowHtml(interp.speed, interp.dir, size, false, showGridLabels);
+          var iconW = showGridLabels ? size + labelExtra : size;
+          var icon = L.divIcon({ html: html, className: '', iconSize: [iconW, size], iconAnchor: [size/2, size/2] });
           var marker = L.marker([glat, glon], { icon: icon, interactive: false }).addTo(map);
           currentMarkers.push(marker);
         }
       }
 
-      // 2) Draw real station arrows on top (clickable, slightly larger)
+      // 2) Draw real station arrows on top (clickable, slightly larger, always labeled)
       var stationSize = size + 4;
       nearbyStations.forEach(function(s) {
         if (!s.data) return;
@@ -5553,8 +5559,8 @@ app.get("/forecast", requireAuth, (req, res) => {
         var rawDir = s.data.dirs[idx] || 0;
         var spd = Math.abs(rawSpeed);
         var dir = rawSpeed < 0 ? (rawDir + 180) % 360 : rawDir;
-        var html = makeArrowHtml(spd, dir, stationSize, true);
-        var icon = L.divIcon({ html: html, className: '', iconSize: [stationSize, stationSize], iconAnchor: [stationSize/2, stationSize/2] });
+        var html = makeArrowHtml(spd, dir, stationSize, true, true);
+        var icon = L.divIcon({ html: html, className: '', iconSize: [stationSize + labelExtra, stationSize], iconAnchor: [stationSize/2, stationSize/2] });
         var marker = L.marker([s.lat, s.lng], { icon: icon })
           .bindPopup('<b>' + s.name + '</b><br>Station ' + s.id + '<br>Speed: ' + spd.toFixed(2) + ' kts<br>Direction: ' + Math.round(dir) + '°<br>' + (rawSpeed < 0 ? 'EBB' : 'FLOOD'))
           .addTo(map);
