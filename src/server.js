@@ -4627,12 +4627,13 @@ app.get("/api/forecast", async (req, res) => {
     let windData = null;
     try {
       const windUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m&forecast_hours=24&wind_speed_unit=kn`;
-      const windResp = await fetch(windUrl, { signal: AbortSignal.timeout(8000) });
-      const ct = windResp.headers.get('content-type') || '';
-      if (ct.includes('application/json')) {
-        windData = await windResp.json();
-      } else {
-        console.error('/api/forecast wind: non-JSON response (' + ct + ')');
+      const windResp = await fetch(windUrl, { signal: AbortSignal.timeout(12000) });
+      console.log('/api/forecast wind status:', windResp.status, 'ct:', windResp.headers.get('content-type'));
+      const windText = await windResp.text();
+      try {
+        windData = JSON.parse(windText);
+      } catch(pe) {
+        console.error('/api/forecast wind JSON parse failed. Body head:', windText.slice(0, 200));
       }
     } catch(we) {
       console.error('/api/forecast wind fetch failed:', we.message);
@@ -4914,6 +4915,15 @@ app.get("/forecast", requireAuth, (req, res) => {
           <span style="display:flex;align-items:center;gap:6px;"><span style="display:inline-block;width:14px;height:14px;background:#ef5350;border-radius:3px;"></span>Strong (&gt; 1.5 kts)</span>
         </div>
       </div>
+    </div>
+
+    <!-- ======================================== -->
+    <!-- 7-DAY NWS WIND FORECAST (US locations)   -->
+    <!-- ======================================== -->
+    <div style="background:#0b1a2b;color:#e8eaf0;border-radius:14px;padding:20px;margin-bottom:20px;box-shadow:0 2px 12px rgba(0,0,0,0.15);">
+      <h3 style="color:#90caf9;margin:0 0 14px;display:flex;align-items:center;gap:8px;">🌬️ 7-Day Wind Forecast <span style="font-size:0.7rem;color:#78909c;font-weight:400;">via NOAA NWS</span></h3>
+      <div id="nws-forecast-status" style="font-size:0.85rem;color:#78909c;margin-bottom:10px;">Loading 7-day forecast for Miami, FL...</div>
+      <div id="nws-forecast-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px;"></div>
     </div>
   </div>
 
@@ -5625,6 +5635,67 @@ app.get("/forecast", requireAuth, (req, res) => {
 
     // Initialize immediately with Miami default — no geolocation prompt
     initCurrentMap(mapCenter.lat, mapCenter.lon);
+  })();
+  </script>
+
+  <!-- 7-Day NWS Wind Forecast: standalone, defaults to Miami, fully isolated -->
+  <script>
+  (function() {
+    var DEFAULT_LAT = 25.7617;
+    var DEFAULT_LON = -80.1918;
+
+    function compassToDeg(c) {
+      var m = {N:0,NNE:22.5,NE:45,ENE:67.5,E:90,ESE:112.5,SE:135,SSE:157.5,S:180,SSW:202.5,SW:225,WSW:247.5,W:270,WNW:292.5,NW:315,NNW:337.5};
+      return m[c] || 0;
+    }
+
+    function loadNwsForecast(lat, lon) {
+      var statusEl = document.getElementById('nws-forecast-status');
+      var gridEl = document.getElementById('nws-forecast-grid');
+      if (!statusEl || !gridEl) return;
+      statusEl.textContent = 'Loading 7-day forecast for ' + lat.toFixed(2) + ', ' + lon.toFixed(2) + '...';
+      gridEl.innerHTML = '';
+      fetch('https://api.weather.gov/points/' + lat.toFixed(4) + ',' + lon.toFixed(4))
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (!data.properties || !data.properties.forecast) {
+            statusEl.textContent = 'NWS forecast not available for this location (US only).';
+            return null;
+          }
+          return fetch(data.properties.forecast);
+        })
+        .then(function(r) { return r ? r.json() : null; })
+        .then(function(data) {
+          if (!data) return;
+          var periods = (data.properties && data.properties.periods) || [];
+          if (!periods.length) { statusEl.textContent = 'No forecast periods returned.'; return; }
+          statusEl.textContent = 'Showing ' + Math.min(periods.length, 14) + ' periods (~7 days):';
+          gridEl.innerHTML = periods.slice(0, 14).map(function(p) {
+            var dirDeg = compassToDeg(p.windDirection);
+            var windNum = parseFloat((p.windSpeed || '').split(' ')[0]) || 0;
+            var color = windNum < 8 ? '#4caf50' : windNum < 15 ? '#42a5f5' : windNum < 22 ? '#ff9800' : '#ef5350';
+            return '<div style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:12px;border-left:4px solid ' + color + ';">' +
+              '<div style="font-weight:700;color:#90caf9;font-size:0.88rem;margin-bottom:4px;">' + (p.name || '') + '</div>' +
+              '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">' +
+                '<div style="font-size:1.6rem;transform:rotate(' + dirDeg + 'deg);color:#fff;">↓</div>' +
+                '<div><div style="font-size:1.1rem;font-weight:700;color:#fff;">' + (p.windSpeed || '?') + '</div>' +
+                '<div style="font-size:0.78rem;color:#90a4ae;">' + (p.windDirection || '') + '</div></div>' +
+              '</div>' +
+              '<div style="font-size:0.78rem;color:#cfd8dc;">' + (p.shortForecast || '') + '</div>' +
+              '<div style="font-size:0.74rem;color:#78909c;margin-top:4px;">' + p.temperature + '°' + p.temperatureUnit + '</div>' +
+              '</div>';
+          }).join('');
+        })
+        .catch(function(err) {
+          statusEl.textContent = 'Error loading NWS forecast: ' + err.message;
+        });
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function() { loadNwsForecast(DEFAULT_LAT, DEFAULT_LON); });
+    } else {
+      loadNwsForecast(DEFAULT_LAT, DEFAULT_LON);
+    }
   })();
   </script>`, req.session.user, lang));
 });
