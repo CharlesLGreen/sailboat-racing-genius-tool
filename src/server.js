@@ -700,44 +700,36 @@ app.get('/sw.js', (req, res) => {
 app.use(express.static(path.join(__dirname, "public")));
 
 // Generate PWA icons dynamically from logo
+// PWA icons — generated as REAL PNGs (not JPEGs) at the exact dimensions the
+// manifest declares, so PWABuilder's icon-type/size validation passes.
 let iconCache192 = null, iconCache512 = null;
-
-app.get(["/icons/icon-192.png", "/icons/icon-512.png"], (req, res) => {
-  const logoPath = path.join(__dirname, 'public', 'logo.jpg');
-  if (fs.existsSync(logoPath)) {
-    res.type('image/jpeg');
-    res.send(fs.readFileSync(logoPath));
-  } else {
-    res.status(404).end();
+function makeIconPng(size) {
+  const sharp = require('sharp');
+  const fontSize = Math.round(size * 0.62);
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '">' +
+    '<rect width="100%" height="100%" fill="#0a1628"/>' +
+    '<text x="50%" y="50%" font-family="Segoe UI,Arial,sans-serif" font-size="' + fontSize + '" font-weight="900" fill="#ffffff" text-anchor="middle" dominant-baseline="central">S</text>' +
+    '</svg>';
+  return sharp(Buffer.from(svg)).png().toBuffer();
+}
+function serveIcon(size, cacheRef, res) {
+  const cached = cacheRef === 192 ? iconCache192 : iconCache512;
+  if (cached) {
+    res.type('png');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    return res.send(cached);
   }
-});
-
-app.get("/icon-192.png", (req, res) => {
-  if (iconCache192) { res.type('png'); return res.send(iconCache192); }
-  // Serve logo.jpg as the icon (browsers handle the format)
-  const logoPath = path.join(__dirname, 'public', 'logo.jpg');
-  if (fs.existsSync(logoPath)) {
-    const data = fs.readFileSync(logoPath);
-    iconCache192 = data;
-    res.type('image/jpeg');
-    res.send(data);
-  } else {
-    res.status(404).end();
-  }
-});
-
-app.get("/icon-512.png", (req, res) => {
-  if (iconCache512) { res.type('png'); return res.send(iconCache512); }
-  const logoPath = path.join(__dirname, 'public', 'logo.jpg');
-  if (fs.existsSync(logoPath)) {
-    const data = fs.readFileSync(logoPath);
-    iconCache512 = data;
-    res.type('image/jpeg');
-    res.send(data);
-  } else {
-    res.status(404).end();
-  }
-});
+  makeIconPng(size).then(function(buf) {
+    if (cacheRef === 192) iconCache192 = buf; else iconCache512 = buf;
+    res.type('png');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.send(buf);
+  }).catch(function(err) {
+    res.status(500).send('icon generation failed: ' + err.message);
+  });
+}
+app.get(["/icons/icon-192.png", "/icon-192.png"], (req, res) => serveIcon(192, 192, res));
+app.get(["/icons/icon-512.png", "/icon-512.png"], (req, res) => serveIcon(512, 512, res));
 
 // Simple session store backed by SQLite
 class SQLiteSessionStore extends session.Store {
