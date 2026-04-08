@@ -5270,6 +5270,53 @@ app.get("/forecast", requireAuth, (req, res) => {
       <canvas id="wind-dir-chart" height="200"></canvas>
     </div>
 
+    <!-- ============================================ -->
+    <!-- HRRR WIND FORECAST MAP (Open-Meteo, 18h)     -->
+    <!-- Standalone, isolated from other IIFEs        -->
+    <!-- ============================================ -->
+    <div style="background:#0a1628;color:#e8eaf0;border-radius:14px;padding:20px;margin-bottom:20px;box-shadow:0 2px 12px rgba(0,0,0,0.15);">
+      <h3 style="color:#90caf9;margin:0 0 4px;display:flex;align-items:center;gap:8px;">🌪️ HRRR wind forecast <span style="font-size:0.7rem;color:#78909c;font-weight:400;">via Open-Meteo</span></h3>
+      <div id="hrrr-location-label" style="font-size:0.82rem;color:#90a4ae;margin-bottom:12px;">Detecting location…</div>
+      <div id="hrrr-wind-map" style="height:420px;border-radius:10px;background:#06101a;"></div>
+      <div style="margin-top:14px;background:rgba(255,255,255,0.05);border-radius:10px;padding:14px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:10px;">
+          <strong style="color:#90caf9;font-size:0.88rem;">Forecast hour:</strong>
+          <span id="hrrr-time-label" style="color:#fff;font-weight:700;font-size:0.95rem;">+0h</span>
+          <button id="hrrr-play-btn" type="button" style="background:#1d6ea5;color:#fff;border:none;border-radius:6px;padding:6px 14px;cursor:pointer;font-weight:700;font-size:0.85rem;">▶ Play</button>
+        </div>
+        <input type="range" id="hrrr-time-slider" min="0" max="17" value="0" step="1" style="width:100%;">
+        <div style="display:flex;justify-content:space-between;font-size:0.75rem;color:#78909c;margin-top:4px;">
+          <span>Now</span><span>+6h</span><span>+12h</span><span>+17h</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px;">
+          <div style="background:rgba(255,255,255,0.06);border-radius:8px;padding:10px;text-align:center;">
+            <div style="font-size:0.72rem;color:#78909c;text-transform:uppercase;letter-spacing:0.5px;">Avg wind</div>
+            <div id="hrrr-stat-avg" style="font-size:1.4rem;font-weight:800;color:#fff;">—</div>
+            <div style="font-size:0.7rem;color:#78909c;">kts</div>
+          </div>
+          <div style="background:rgba(255,255,255,0.06);border-radius:8px;padding:10px;text-align:center;">
+            <div style="font-size:0.72rem;color:#78909c;text-transform:uppercase;letter-spacing:0.5px;">Max gust</div>
+            <div id="hrrr-stat-gust" style="font-size:1.4rem;font-weight:800;color:#fff;">—</div>
+            <div style="font-size:0.7rem;color:#78909c;">kts</div>
+          </div>
+          <div style="background:rgba(255,255,255,0.06);border-radius:8px;padding:10px;text-align:center;">
+            <div style="font-size:0.72rem;color:#78909c;text-transform:uppercase;letter-spacing:0.5px;">Direction</div>
+            <div id="hrrr-stat-dir" style="font-size:1.4rem;font-weight:800;color:#fff;">—</div>
+            <div style="font-size:0.7rem;color:#78909c;">from</div>
+          </div>
+        </div>
+        <div style="margin-top:14px;">
+          <div style="height:12px;border-radius:6px;background:linear-gradient(to right,#1a3a5c 0%,#1a3a5c 16%,#1d6ea5 16%,#1d6ea5 33%,#1d9e75 33%,#1d9e75 50%,#8db83a 50%,#8db83a 66%,#e8a020 66%,#e8a020 83%,#d84030 83%,#d84030 100%);"></div>
+          <div style="display:flex;justify-content:space-between;font-size:0.7rem;color:#78909c;margin-top:4px;">
+            <span>0</span><span>5</span><span>10</span><span>15</span><span>20</span><span>25+</span>
+          </div>
+          <div style="font-size:0.72rem;color:#78909c;margin-top:8px;line-height:1.5;">
+            Wind barbs follow standard meteorological convention. Shaft points in the direction the wind is blowing <em>toward</em>; ticks on the upwind side: half-tick = 5 kt, full tick = 10 kt, pennant (triangle) = 50 kt. Color = wind speed.
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Tide/Current Chart -->
     <div id="tide-section" style="display:none;background:white;border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
       <h3 style="color:#0b3d6e;margin-top:0;">🌊 ${L('tideForecast')}</h3>
@@ -6078,6 +6125,200 @@ app.get("/forecast", requireAuth, (req, res) => {
       document.addEventListener('DOMContentLoaded', function() { loadNwsForecast(DEFAULT_LAT, DEFAULT_LON); });
     } else {
       loadNwsForecast(DEFAULT_LAT, DEFAULT_LON);
+    }
+  })();
+  </script>
+
+  <!-- HRRR Wind Forecast Map: standalone, isolated IIFE, fetches Open-Meteo client-side -->
+  <script>
+  (function() {
+    var FALLBACK_LAT = 25.77, FALLBACK_LON = -80.19;
+    var GRID_STEP = 0.05;
+    var GRID_N = 3;
+    var hours = 18;
+    var data = null;
+    var map = null, barbLayer = null, currentHour = 0, playTimer = null;
+
+    function speedColor(s) {
+      if (s < 5) return '#1a3a5c';
+      if (s < 10) return '#1d6ea5';
+      if (s < 15) return '#1d9e75';
+      if (s < 20) return '#8db83a';
+      if (s < 25) return '#e8a020';
+      return '#d84030';
+    }
+
+    function degToCompass(d) {
+      var dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+      return dirs[Math.round(((d % 360) / 22.5)) % 16];
+    }
+
+    // Standard meteorological wind barb. dirFromDeg = direction wind comes FROM (Open-Meteo).
+    // Shaft points in the direction wind blows TOWARD; ticks on the upwind end.
+    function buildBarbSvg(speedKt, dirFromDeg, color) {
+      var size = 60, cx = size/2, cy = size/2, shaftLen = 26;
+      var toDeg = (dirFromDeg + 180) % 360;
+      var rad = toDeg * Math.PI / 180;
+      var ux = Math.sin(rad), uy = -Math.cos(rad);
+      var x2 = cx + ux * shaftLen, y2 = cy + uy * shaftLen;
+      var s = Math.max(0, Math.round(speedKt / 5) * 5);
+      var pennants = Math.floor(s / 50); s -= pennants * 50;
+      var fulls = Math.floor(s / 10); s -= fulls * 10;
+      var halfs = Math.floor(s / 5);
+      var perpRad = (toDeg + 90) * Math.PI / 180;
+      var px = Math.sin(perpRad), py = -Math.cos(perpRad);
+      var tickSpacing = 4, tickLen = 9, marks = '', pos = 0;
+      for (var i = 0; i < pennants; i++) {
+        var bx = cx + ux * pos, by = cy + uy * pos;
+        var bx2 = cx + ux * (pos + tickSpacing), by2 = cy + uy * (pos + tickSpacing);
+        var tx = bx + px * tickLen, ty = by + py * tickLen;
+        marks += '<polygon points="' + bx + ',' + by + ' ' + bx2 + ',' + by2 + ' ' + tx + ',' + ty + '" fill="' + color + '"/>';
+        pos += tickSpacing + 1;
+      }
+      for (var j = 0; j < fulls; j++) {
+        var fbx = cx + ux * pos, fby = cy + uy * pos;
+        var ftx = fbx + px * tickLen, fty = fby + py * tickLen;
+        marks += '<line x1="' + fbx + '" y1="' + fby + '" x2="' + ftx + '" y2="' + fty + '" stroke="' + color + '" stroke-width="2"/>';
+        pos += tickSpacing;
+      }
+      for (var k = 0; k < halfs; k++) {
+        var hbx = cx + ux * pos, hby = cy + uy * pos;
+        var htx = hbx + px * (tickLen / 2), hty = hby + py * (tickLen / 2);
+        marks += '<line x1="' + hbx + '" y1="' + hby + '" x2="' + htx + '" y2="' + hty + '" stroke="' + color + '" stroke-width="2"/>';
+        pos += tickSpacing;
+      }
+      var calmDot = (speedKt < 2.5) ? '<circle cx="' + cx + '" cy="' + cy + '" r="3" fill="none" stroke="' + color + '" stroke-width="1.5"/>' : '';
+      var shaft = (speedKt >= 2.5) ? '<line x1="' + cx + '" y1="' + cy + '" x2="' + x2 + '" y2="' + y2 + '" stroke="' + color + '" stroke-width="2"/>' : '';
+      return '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '">' + shaft + marks + calmDot + '</svg>';
+    }
+
+    function buildGrid(centerLat, centerLon) {
+      var pts = [], half = (GRID_N - 1) / 2;
+      for (var i = 0; i < GRID_N; i++) {
+        for (var j = 0; j < GRID_N; j++) {
+          pts.push({ lat: centerLat + (i - half) * GRID_STEP, lon: centerLon + (j - half) * GRID_STEP });
+        }
+      }
+      return pts;
+    }
+
+    function fetchHrrr(centerLat, centerLon) {
+      var pts = buildGrid(centerLat, centerLon);
+      var lats = pts.map(function(p) { return p.lat.toFixed(4); }).join(',');
+      var lons = pts.map(function(p) { return p.lon.toFixed(4); }).join(',');
+      var url = 'https://api.open-meteo.com/v1/forecast?latitude=' + lats + '&longitude=' + lons +
+                '&hourly=windspeed_10m,winddirection_10m,windgusts_10m&windspeed_unit=kn&forecast_days=1&models=gfs_hrrr';
+      return fetch(url).then(function(r) { return r.json(); }).then(function(json) {
+        var arr = Array.isArray(json) ? json : [json];
+        var times = arr[0] && arr[0].hourly ? arr[0].hourly.time.slice(0, hours) : [];
+        var points = arr.map(function(loc, idx) {
+          var h = loc.hourly || {};
+          return {
+            lat: pts[idx].lat,
+            lon: pts[idx].lon,
+            ws: (h.windspeed_10m || []).slice(0, hours),
+            wd: (h.winddirection_10m || []).slice(0, hours),
+            wg: (h.windgusts_10m || []).slice(0, hours)
+          };
+        });
+        return { times: times, points: points };
+      });
+    }
+
+    function renderFrame(hour) {
+      if (!data || !map) return;
+      if (barbLayer) { barbLayer.clearLayers(); }
+      else { barbLayer = L.layerGroup().addTo(map); }
+      var sumWs = 0, maxGust = 0, sumDirX = 0, sumDirY = 0, n = 0;
+      data.points.forEach(function(p) {
+        var s = p.ws[hour], d = p.wd[hour], g = p.wg[hour];
+        if (s == null || d == null) return;
+        var color = speedColor(s);
+        var svg = buildBarbSvg(s, d, color);
+        var icon = L.divIcon({ className: 'hrrr-barb', html: svg, iconSize: [60, 60], iconAnchor: [30, 30] });
+        L.marker([p.lat, p.lon], { icon: icon, interactive: false }).addTo(barbLayer);
+        sumWs += s; if (g != null && g > maxGust) maxGust = g;
+        var rad = d * Math.PI / 180;
+        sumDirX += Math.sin(rad); sumDirY += Math.cos(rad);
+        n++;
+      });
+      if (n > 0) {
+        var avg = sumWs / n;
+        var meanDir = (Math.atan2(sumDirX / n, sumDirY / n) * 180 / Math.PI + 360) % 360;
+        document.getElementById('hrrr-stat-avg').textContent = avg.toFixed(1);
+        document.getElementById('hrrr-stat-gust').textContent = maxGust.toFixed(1);
+        document.getElementById('hrrr-stat-dir').textContent = degToCompass(meanDir);
+      }
+      var label = '+' + hour + 'h';
+      if (data.times[hour]) {
+        var t = new Date(data.times[hour]);
+        label += '  ' + t.toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+      }
+      document.getElementById('hrrr-time-label').textContent = label;
+    }
+
+    function initMap(centerLat, centerLon, locLabel) {
+      var locEl = document.getElementById('hrrr-location-label');
+      if (locEl) locEl.textContent = locLabel + ' (' + centerLat.toFixed(2) + ', ' + centerLon.toFixed(2) + ')';
+      if (typeof L === 'undefined') {
+        if (locEl) locEl.textContent = 'Leaflet failed to load.';
+        return;
+      }
+      map = L.map('hrrr-wind-map', { zoomControl: true, attributionControl: true }).setView([centerLat, centerLon], 10);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 18,
+        attribution: '&copy; OpenStreetMap contributors'
+      }).addTo(map);
+      fetchHrrr(centerLat, centerLon).then(function(d) {
+        data = d;
+        if (!data.points.length || !data.points[0].ws.length) {
+          document.getElementById('hrrr-location-label').textContent = locLabel + ' — no HRRR data for this location (HRRR is US-only; Open-Meteo will fall back to GFS outside CONUS).';
+          return;
+        }
+        renderFrame(0);
+      }).catch(function(err) {
+        document.getElementById('hrrr-location-label').textContent = locLabel + ' — failed to load wind forecast: ' + err.message;
+      });
+    }
+
+    function startHrrr() {
+      var slider = document.getElementById('hrrr-time-slider');
+      var playBtn = document.getElementById('hrrr-play-btn');
+      if (slider) {
+        slider.addEventListener('input', function() {
+          currentHour = parseInt(slider.value, 10) || 0;
+          renderFrame(currentHour);
+        });
+      }
+      if (playBtn) {
+        playBtn.addEventListener('click', function() {
+          if (playTimer) {
+            clearInterval(playTimer); playTimer = null; playBtn.textContent = '▶ Play';
+          } else {
+            playBtn.textContent = '⏸ Pause';
+            playTimer = setInterval(function() {
+              currentHour = (currentHour + 1) % hours;
+              if (slider) slider.value = currentHour;
+              renderFrame(currentHour);
+            }, 800);
+          }
+        });
+      }
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          function(pos) { initMap(pos.coords.latitude, pos.coords.longitude, 'Your location'); },
+          function() { initMap(FALLBACK_LAT, FALLBACK_LON, 'Miami, FL (default)'); },
+          { timeout: 6000, maximumAge: 600000 }
+        );
+      } else {
+        initMap(FALLBACK_LAT, FALLBACK_LON, 'Miami, FL (default)');
+      }
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', startHrrr);
+    } else {
+      startHrrr();
     }
   })();
   </script>`, req.session.user, lang));
