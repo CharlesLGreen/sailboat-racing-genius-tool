@@ -3640,12 +3640,19 @@ app.get("/magic", requireAuth, (req, res) => {
             <option value="quantum">Quantum</option>
             <option value="north">North</option>
             <option value="olimpic">Olimpic</option>
+            <option value="pl">PL Sails (Pires de Lima, Portugal)</option>
+            <option value="vb">VB Voiles (France)</option>
+            <option value="wb">WB Sails (Finland)</option>
+            <option value="ullman">Ullman Sails</option>
+            <option value="custom">Other / Custom…</option>
           </select>
         </div>
         <div class="form-group">
           <label>Mainsail Model</label>
           <select id="mg-main-model" style="padding:10px;border:2px solid #e2e8f0;border-radius:8px;font-size:1rem;width:100%;">
           </select>
+          <input id="mg-main-maker-custom" type="text" placeholder="Sailmaker name (custom)" style="display:none;margin-top:6px;padding:10px;border:2px solid #e2e8f0;border-radius:8px;font-size:1rem;width:100%;">
+          <input id="mg-main-model-custom" type="text" placeholder="Mainsail model (custom)" style="display:none;margin-top:6px;padding:10px;border:2px solid #e2e8f0;border-radius:8px;font-size:1rem;width:100%;">
         </div>
         <div class="form-group">
           <label>Jib Maker</label>
@@ -3653,12 +3660,19 @@ app.get("/magic", requireAuth, (req, res) => {
             <option value="quantum">Quantum</option>
             <option value="north">North</option>
             <option value="olimpic">Olimpic</option>
+            <option value="pl">PL Sails (Pires de Lima, Portugal)</option>
+            <option value="vb">VB Voiles (France)</option>
+            <option value="wb">WB Sails (Finland)</option>
+            <option value="ullman">Ullman Sails</option>
+            <option value="custom">Other / Custom…</option>
           </select>
         </div>
         <div class="form-group">
           <label>Jib Model</label>
           <select id="mg-jib-model" style="padding:10px;border:2px solid #e2e8f0;border-radius:8px;font-size:1rem;width:100%;">
           </select>
+          <input id="mg-jib-maker-custom" type="text" placeholder="Jib sailmaker name (custom)" style="display:none;margin-top:6px;padding:10px;border:2px solid #e2e8f0;border-radius:8px;font-size:1rem;width:100%;">
+          <input id="mg-jib-model-custom" type="text" placeholder="Jib model (custom)" style="display:none;margin-top:6px;padding:10px;border:2px solid #e2e8f0;border-radius:8px;font-size:1rem;width:100%;">
         </div>
         <div class="form-group">
           <label>${lang === 'es' ? 'Velería del Spinnaker' : lang === 'it' ? 'Veleria dello Spinnaker' : lang === 'pt' ? 'Fabricante do Spinnaker' : 'Spinnaker Maker'}</label>
@@ -3816,8 +3830,26 @@ app.get("/magic", requireAuth, (req, res) => {
     var pageLang = '${getLang(req)}';
     var useInches = (pageLang === 'en');
     // Populate mainsail and jib model dropdowns based on maker selection
-    var mgMainModels = { quantum: ['C-5', 'X-2', 'XFB'], north: ['SW-4', 'PR-3', 'CB-2'], olimpic: ['CRC', 'XPM', 'CM1', 'CM5', 'GTM', 'GTM-F'] };
-    var mgJibModels = { quantum: ['RSJ-14', 'RSJ-8'], north: ['R3-LM', 'Cross-Cut Jib'], olimpic: ['XPJ', 'AR2-F', 'GTJ'] };
+    var mgMainModels = {
+      quantum: ['C-5', 'X-2', 'XFB'],
+      north: ['SW-4', 'PR-3', 'CB-2'],
+      olimpic: ['CRC', 'XPM', 'CM1', 'CM5', 'GTM', 'GTM-F'],
+      pl: ['PL Radial', 'PL Cross-cut', 'PL Light Air Special'],
+      vb: ['VB Radial', 'VB Heavy Air', 'VB Light Air'],
+      wb: ['WB Standard Main'],
+      ullman: ['Ullman Standard Main'],
+      custom: ['(enter model below)']
+    };
+    var mgJibModels = {
+      quantum: ['RSJ-14', 'RSJ-8'],
+      north: ['R3-LM', 'Cross-Cut Jib'],
+      olimpic: ['XPJ', 'AR2-F', 'GTJ'],
+      pl: ['PL Radial Jib', 'PL Cross-cut Jib'],
+      vb: ['VB Radial Jib', 'VB All-Purpose Jib'],
+      wb: ['WB Standard Jib'],
+      ullman: ['Ullman Standard Jib'],
+      custom: ['(enter model below)']
+    };
     function populateMgModels(makerSel, modelSel, models) {
       var maker = makerSel.value;
       var opts = models[maker] || [];
@@ -3832,8 +3864,31 @@ app.get("/magic", requireAuth, (req, res) => {
     var mgMMod = document.getElementById('mg-main-model');
     var mgJM = document.getElementById('mg-jib-maker');
     var mgJMod = document.getElementById('mg-jib-model');
-    if (mgMM && mgMMod) { populateMgModels(mgMM, mgMMod, mgMainModels); mgMM.addEventListener('change', function() { populateMgModels(mgMM, mgMMod, mgMainModels); }); }
-    if (mgJM && mgJMod) { populateMgModels(mgJM, mgJMod, mgJibModels); mgJM.addEventListener('change', function() { populateMgModels(mgJM, mgJMod, mgJibModels); }); }
+    function toggleCustomInputs(makerSel, makerCustom, modelCustom) {
+      var isCustom = makerSel.value === 'custom';
+      if (makerCustom) makerCustom.style.display = isCustom ? '' : 'none';
+      if (modelCustom) modelCustom.style.display = isCustom ? '' : 'none';
+    }
+    var mgMMC = document.getElementById('mg-main-maker-custom');
+    var mgMModC = document.getElementById('mg-main-model-custom');
+    var mgJMC = document.getElementById('mg-jib-maker-custom');
+    var mgJModC = document.getElementById('mg-jib-model-custom');
+    if (mgMM && mgMMod) {
+      populateMgModels(mgMM, mgMMod, mgMainModels);
+      toggleCustomInputs(mgMM, mgMMC, mgMModC);
+      mgMM.addEventListener('change', function() {
+        populateMgModels(mgMM, mgMMod, mgMainModels);
+        toggleCustomInputs(mgMM, mgMMC, mgMModC);
+      });
+    }
+    if (mgJM && mgJMod) {
+      populateMgModels(mgJM, mgJMod, mgJibModels);
+      toggleCustomInputs(mgJM, mgJMC, mgJModC);
+      mgJM.addEventListener('change', function() {
+        populateMgModels(mgJM, mgJMod, mgJibModels);
+        toggleCustomInputs(mgJM, mgJMC, mgJModC);
+      });
+    }
 
     // Spinnaker Easter egg for Magic tab
     var mgSpMaker = document.getElementById('mg-spinnaker-maker');
@@ -4034,6 +4089,294 @@ app.get("/magic", requireAuth, (req, res) => {
           traveler_position: useInches ? '5-7" below centerline — switch to vang sheeting 15+ kts; play main constantly' : '13-18 cm below centerline — switch to vang sheeting 15+ kts; play main constantly',
           augie_equalizer: 'Fully released — vang and traveler control depowering',
           mast_wiggle: 'None — leeward shroud should be snug upwind; rig locked down for control'
+        }
+      },
+      // ⚠️ PL Sails: NO published official tuning guide. Numbers below are derived
+      // from sail-design characteristics + European fleet feedback, NOT from the sailmaker.
+      // Always cross-check with Velas Pires de Lima before racing.
+      pl: {
+        light: {
+          mast_rake: '6.57-6.60 m tape to transom — fuller entry, allow more forestay sag',
+          shroud_tension: '14-16 (Loos PT-1 Black)',
+          shroud_turns: 'Base Sta-Master position',
+          spreader_length: '16.5"-16.9" (42-43 cm) — PL has no published number; use class baseline',
+          spreader_sweep: '28.7"-29.1" (73-74 cm) tip-to-tip',
+          jib_lead: useInches ? '87"-88" from tack — forward, fuller entry' : '221-224 cm from tack — forward, fuller entry',
+          jib_cloth_tension: 'Eased — radial dacron holds shape; ease halyard slightly for power',
+          jib_height: useInches ? '3"-3.5" deck to tack' : '7.6-9 cm deck to tack',
+          jib_outboard_lead: 'Inboard — crew forward to leeward',
+          cunningham: 'Off',
+          outhaul: 'Eased 2-3 cm from black band',
+          vang: 'Slack',
+          centerboard_position: '1 cm fwd (mast pusher) — fuller design wants prebend',
+          traveler_position: 'To windward — boom on or above centerline',
+          augie_equalizer: 'Pull windward AE to center boom for light-air twist',
+          mast_wiggle: '⚠️ Unofficial settings — no PL published tuning guide. Contact Velas Pires de Lima (facebook.com/PLSails). Profile: medium-full depth, medium-full entry, medium top, radial dacron.'
+        },
+        medium: {
+          mast_rake: '6.55-6.57 m tape to transom — transition to neutral mast',
+          shroud_tension: '17-19 (Loos PT-1 Black)',
+          shroud_turns: '~1 turn up on Sta-Master',
+          spreader_length: '16.5"-16.9" (42-43 cm)',
+          spreader_sweep: '29.1" (74 cm) tip-to-tip',
+          jib_lead: useInches ? '88"-90" from tack' : '224-229 cm from tack',
+          jib_cloth_tension: 'Smooth — radial holds shape well',
+          jib_height: useInches ? '3.5"-4.5" deck to tack' : '9-11.5 cm deck to tack',
+          jib_outboard_lead: 'Mid — jib ~1" from spreader tip',
+          cunningham: 'Light',
+          outhaul: 'At black band',
+          vang: 'Light — check prebend 0–1/4"',
+          centerboard_position: 'Neutral (mast pusher)',
+          traveler_position: '3-4" / 8-10 cm below centerline',
+          augie_equalizer: 'Released',
+          mast_wiggle: '⚠️ Unofficial settings — derived from sail-design profile (medium-full depth, radial dacron). No published PL tuning guide; contact Velas Pires de Lima.'
+        },
+        heavy: {
+          mast_rake: '6.44-6.55 m tape to transom — depower aggressively (12-18 kts: 6.51-6.55; 18-24: 6.48-6.52; 24+: 6.44-6.49)',
+          shroud_tension: '20-26 (Loos PT-1 Black) — 12-18: 20-22; 18-24: 22-24; 24+: 24-26',
+          shroud_turns: '2 turns up on Sta-Master',
+          spreader_length: '16.5"-16.9" (42-43 cm)',
+          spreader_sweep: '29.1"-29.9" (74-76 cm) tip-to-tip — widen progressively as wind builds',
+          jib_lead: useInches ? '90"-93" from tack — aft, opens leech' : '229-236 cm from tack — aft, opens leech',
+          jib_cloth_tension: 'Tight — max halyard',
+          jib_height: useInches ? '4.5"-5" deck to tack' : '11.5-12.7 cm deck to tack',
+          jib_outboard_lead: 'Outboard — opens slot',
+          cunningham: 'Max',
+          outhaul: 'Max — moderate luff curve, match mast bend',
+          vang: 'Firm to max — robust cloth handles heavy weather',
+          centerboard_position: 'Neutral to slightly aft mast pusher; ram aft to lock mast at 18+ kts (locked aft at 24+)',
+          traveler_position: '5-7" / 13-18 cm below centerline — vang sheet 15+ kts',
+          augie_equalizer: 'Fully released',
+          mast_wiggle: '⚠️ Unofficial — no PL published guide. Fuller design needs more depower. Secondary spreader pins required at 24+ kts. Contact Velas Pires de Lima for mast-specific settings.'
+        }
+      },
+      // ⚠️ VB Sails: NO published official tuning guide. Numbers below are derived
+      // from sail-design characteristics + European Snipe fleet reports.
+      vb: {
+        light: {
+          mast_rake: '6.57-6.59 m tape to transom — slightly less sag than fuller sails',
+          shroud_tension: '15-17 (Loos PT-1 Black)',
+          shroud_turns: 'Base Sta-Master position',
+          spreader_length: '16.5"-16.9" (42-43 cm) — VB has no published number; class baseline',
+          spreader_sweep: '28.7"-29.1" (73-74 cm) tip-to-tip',
+          jib_lead: useInches ? '87"-88" from tack' : '221-224 cm from tack',
+          jib_cloth_tension: 'Eased slightly — light-air speed is a VB strength',
+          jib_height: useInches ? '3"-3.5" deck to tack' : '7.6-9 cm deck to tack',
+          jib_outboard_lead: 'Inboard',
+          cunningham: 'Off',
+          outhaul: 'Eased — medium profile',
+          vang: 'Slack',
+          centerboard_position: '1 cm fwd (mast pusher) — mast forward of partners',
+          traveler_position: 'To windward',
+          augie_equalizer: 'Pull windward AE to center boom',
+          mast_wiggle: '⚠️ Unofficial settings — no VB published tuning guide. Contact VB Voiles (Jean Jacques Frebault, France). Profile: medium depth, medium-fine entry, medium-full top, radial dacron.'
+        },
+        medium: {
+          mast_rake: '6.55-6.57 m tape to transom — clean transition to neutral',
+          shroud_tension: '18-20 (Loos PT-1 Black)',
+          shroud_turns: '~1 turn up on Sta-Master',
+          spreader_length: '16.5"-16.9" (42-43 cm)',
+          spreader_sweep: '29.1" (74 cm) tip-to-tip',
+          jib_lead: useInches ? '88"-90" from tack — inboard for pointing in chop' : '224-229 cm from tack — inboard for pointing in chop',
+          jib_cloth_tension: 'Smooth — medium profile holds well',
+          jib_height: useInches ? '3.5"-4.5" deck to tack' : '9-11.5 cm deck to tack',
+          jib_outboard_lead: 'Mid — jib ~1" from spreader tip',
+          cunningham: 'Light',
+          outhaul: 'Firm, near max',
+          vang: 'Light — controls leech and lower mast bend',
+          centerboard_position: 'Neutral (mast pusher)',
+          traveler_position: '3-4" / 8-10 cm below centerline',
+          augie_equalizer: 'Released',
+          mast_wiggle: '⚠️ Unofficial settings — derived from VB sail-design profile. No published guide; contact VB Voiles.'
+        },
+        heavy: {
+          mast_rake: '6.43-6.54 m tape to transom — 12-18: 6.51-6.54; 18-24: 6.47-6.51; 24+: 6.43-6.48',
+          shroud_tension: '20-27 (Loos PT-1 Black) — 12-18: 20-23; 18-24: 22-25; 24+: 24-27',
+          shroud_turns: '2 turns up on Sta-Master',
+          spreader_length: '16.5"-16.9" (42-43 cm)',
+          spreader_sweep: '29.1"-29.9" (74-76 cm) tip-to-tip — jib 2-3 cm from spreader tip',
+          jib_lead: useInches ? '90"-93" from tack — aft, opens leech' : '229-236 cm from tack — aft, opens leech',
+          jib_cloth_tension: 'Max halyard; ease jib 2-4 cm in survival squalls',
+          jib_height: useInches ? '4.5"-5" deck to tack' : '11.5-12.7 cm deck to tack',
+          jib_outboard_lead: 'Outboard',
+          cunningham: 'Max',
+          outhaul: 'Max — medium-top design flattens well',
+          vang: 'Heavy — but in chop ease slightly for twist through waves; do not over-vang (inversion risk)',
+          centerboard_position: 'Neutral to slightly aft mast pusher; ram fully aft (locked at 24+)',
+          traveler_position: '5-7" / 13-18 cm below centerline — crew weight max outboard',
+          augie_equalizer: 'Fully released',
+          mast_wiggle: '⚠️ Unofficial — no VB published guide. Secondary spreader pins essential at 24+ kts. Contact VB Voiles.'
+        }
+      },
+      // WB Sails (Finland) — no published Snipe tuning guide. Use class baseline (mirrors Quantum medium-rake setup).
+      wb: {
+        light: {
+          mast_rake: '21\\'6"-21\\'7" (6.55-6.58m) — class baseline; WB has no published guide',
+          shroud_tension: '21 (Loos PT-1 Black)',
+          shroud_turns: 'Base Sta-Master position',
+          spreader_length: '16.75"-16.875" (42.5-43 cm)',
+          spreader_sweep: '29"-29.5" (73.5-75 cm) tip-to-tip',
+          jib_lead: useInches ? '87"-88" from tack' : '221-224 cm from tack',
+          jib_cloth_tension: 'Light wrinkles along luff',
+          jib_height: useInches ? '3"-3.5" deck to tack' : '7.6-9 cm deck to tack',
+          jib_outboard_lead: 'Inboard',
+          cunningham: 'Off',
+          outhaul: 'Eased 1-2"',
+          vang: 'Slack',
+          centerboard_position: 'Fwd 1/4"-1/2" mast pusher',
+          traveler_position: 'To windward',
+          augie_equalizer: 'Pull windward AE to center boom',
+          mast_wiggle: '⚠️ WB Sails has no published Snipe tuning guide. Settings shown are general class baseline (Quantum-equivalent). Contact WB Sails (Finland) for sail-specific recommendations.'
+        },
+        medium: {
+          mast_rake: '21\\'4"-21\\'5.5" (6.50-6.54m) — class baseline',
+          shroud_tension: '23-25 (Loos PT-1 Black)',
+          shroud_turns: '1 turn up on Sta-Master',
+          spreader_length: '16.75"-16.875" (42.5-43 cm)',
+          spreader_sweep: '29.5"-30" (75-76 cm) tip-to-tip',
+          jib_lead: useInches ? '88"-90" from tack' : '224-229 cm from tack',
+          jib_cloth_tension: 'Smooth',
+          jib_height: useInches ? '3.5"-4.5" deck to tack' : '9-11.5 cm deck to tack',
+          jib_outboard_lead: 'Mid',
+          cunningham: 'Light',
+          outhaul: 'At black band',
+          vang: 'Light',
+          centerboard_position: 'Neutral mast pusher',
+          traveler_position: '3-4" / 8-10 cm below centerline',
+          augie_equalizer: 'Released',
+          mast_wiggle: '⚠️ Class baseline shown — WB Sails has no published Snipe tuning guide. Contact WB Sails for sail-specific recommendations.'
+        },
+        heavy: {
+          mast_rake: '21\\'1"-21\\'4" (6.42-6.50m) — class baseline',
+          shroud_tension: '25-28 (Loos PT-1 Black)',
+          shroud_turns: '2 turns up on Sta-Master',
+          spreader_length: '16.75"-16.875" (42.5-43 cm)',
+          spreader_sweep: '30"-31.5" (76-80 cm) tip-to-tip',
+          jib_lead: useInches ? '90"-93" from tack' : '229-236 cm from tack',
+          jib_cloth_tension: 'Max halyard',
+          jib_height: useInches ? '4.5"-5" deck to tack' : '11.5-12.7 cm deck to tack',
+          jib_outboard_lead: 'Outboard',
+          cunningham: 'Max',
+          outhaul: 'Max',
+          vang: 'Heavy — vang-sheet in gusts',
+          centerboard_position: 'Aft 3/8"-5/8" mast pusher',
+          traveler_position: '5-7" / 13-18 cm below centerline',
+          augie_equalizer: 'Fully released',
+          mast_wiggle: '⚠️ Class baseline — WB Sails has no published Snipe tuning guide. Contact WB Sails directly for heavy-air settings.'
+        }
+      },
+      // Ullman Sails — no published Snipe tuning guide. Class baseline.
+      ullman: {
+        light: {
+          mast_rake: '21\\'6"-21\\'7" (6.55-6.58m) — class baseline; Ullman has no published Snipe guide',
+          shroud_tension: '21 (Loos PT-1 Black)',
+          shroud_turns: 'Base Sta-Master position',
+          spreader_length: '16.75"-16.875" (42.5-43 cm)',
+          spreader_sweep: '29"-29.5" (73.5-75 cm) tip-to-tip',
+          jib_lead: useInches ? '87"-88" from tack' : '221-224 cm from tack',
+          jib_cloth_tension: 'Light wrinkles along luff',
+          jib_height: useInches ? '3"-3.5" deck to tack' : '7.6-9 cm deck to tack',
+          jib_outboard_lead: 'Inboard',
+          cunningham: 'Off',
+          outhaul: 'Eased 1-2"',
+          vang: 'Slack',
+          centerboard_position: 'Fwd 1/4"-1/2" mast pusher',
+          traveler_position: 'To windward',
+          augie_equalizer: 'Pull windward AE to center boom',
+          mast_wiggle: '⚠️ Ullman Sails has no published Snipe tuning guide. Settings shown are general class baseline. Contact Ullman Sails for sail-specific recommendations.'
+        },
+        medium: {
+          mast_rake: '21\\'4"-21\\'5.5" (6.50-6.54m) — class baseline',
+          shroud_tension: '23-25 (Loos PT-1 Black)',
+          shroud_turns: '1 turn up on Sta-Master',
+          spreader_length: '16.75"-16.875" (42.5-43 cm)',
+          spreader_sweep: '29.5"-30" (75-76 cm) tip-to-tip',
+          jib_lead: useInches ? '88"-90" from tack' : '224-229 cm from tack',
+          jib_cloth_tension: 'Smooth',
+          jib_height: useInches ? '3.5"-4.5" deck to tack' : '9-11.5 cm deck to tack',
+          jib_outboard_lead: 'Mid',
+          cunningham: 'Light',
+          outhaul: 'At black band',
+          vang: 'Light',
+          centerboard_position: 'Neutral mast pusher',
+          traveler_position: '3-4" / 8-10 cm below centerline',
+          augie_equalizer: 'Released',
+          mast_wiggle: '⚠️ Class baseline — Ullman Sails has no published Snipe tuning guide. Contact Ullman directly.'
+        },
+        heavy: {
+          mast_rake: '21\\'1"-21\\'4" (6.42-6.50m) — class baseline',
+          shroud_tension: '25-28 (Loos PT-1 Black)',
+          shroud_turns: '2 turns up on Sta-Master',
+          spreader_length: '16.75"-16.875" (42.5-43 cm)',
+          spreader_sweep: '30"-31.5" (76-80 cm) tip-to-tip',
+          jib_lead: useInches ? '90"-93" from tack' : '229-236 cm from tack',
+          jib_cloth_tension: 'Max halyard',
+          jib_height: useInches ? '4.5"-5" deck to tack' : '11.5-12.7 cm deck to tack',
+          jib_outboard_lead: 'Outboard',
+          cunningham: 'Max',
+          outhaul: 'Max',
+          vang: 'Heavy — vang-sheet in gusts',
+          centerboard_position: 'Aft 3/8"-5/8" mast pusher',
+          traveler_position: '5-7" / 13-18 cm below centerline',
+          augie_equalizer: 'Fully released',
+          mast_wiggle: '⚠️ Class baseline — Ullman Sails has no published Snipe tuning guide. Contact Ullman directly.'
+        }
+      },
+      // Custom / Other — generic Snipe baseline. User entered their own sailmaker name.
+      custom: {
+        light: {
+          mast_rake: '21\\'6"-21\\'7" (6.55-6.58m) — generic Snipe baseline',
+          shroud_tension: '21 (Loos PT-1 Black)',
+          shroud_turns: 'Base Sta-Master position',
+          spreader_length: '16.75" (42.5 cm)',
+          spreader_sweep: '29"-29.5" (73.5-75 cm) tip-to-tip',
+          jib_lead: useInches ? '87"-88" from tack' : '221-224 cm from tack',
+          jib_cloth_tension: 'Light wrinkles along luff',
+          jib_height: useInches ? '3"-3.5" deck to tack' : '7.6-9 cm deck to tack',
+          jib_outboard_lead: 'Inboard',
+          cunningham: 'Off',
+          outhaul: 'Eased 1-2"',
+          vang: 'Slack',
+          centerboard_position: 'Fwd 1/4"-1/2" mast pusher',
+          traveler_position: 'To windward',
+          augie_equalizer: 'Pull windward AE to center boom',
+          mast_wiggle: '⚠️ Generic Snipe baseline — your sailmaker is not in our database. Contact your sailmaker directly for sail-specific tuning recommendations.'
+        },
+        medium: {
+          mast_rake: '21\\'4"-21\\'5.5" (6.50-6.54m) — generic baseline',
+          shroud_tension: '23-25 (Loos PT-1 Black)',
+          shroud_turns: '1 turn up on Sta-Master',
+          spreader_length: '16.75" (42.5 cm)',
+          spreader_sweep: '29.5"-30" (75-76 cm) tip-to-tip',
+          jib_lead: useInches ? '88"-90" from tack' : '224-229 cm from tack',
+          jib_cloth_tension: 'Smooth',
+          jib_height: useInches ? '3.5"-4.5" deck to tack' : '9-11.5 cm deck to tack',
+          jib_outboard_lead: 'Mid',
+          cunningham: 'Light',
+          outhaul: 'At black band',
+          vang: 'Light',
+          centerboard_position: 'Neutral mast pusher',
+          traveler_position: '3-4" / 8-10 cm below centerline',
+          augie_equalizer: 'Released',
+          mast_wiggle: '⚠️ Generic Snipe baseline — contact your sailmaker directly for sail-specific recommendations.'
+        },
+        heavy: {
+          mast_rake: '21\\'1"-21\\'4" (6.42-6.50m) — generic baseline',
+          shroud_tension: '25-28 (Loos PT-1 Black)',
+          shroud_turns: '2 turns up on Sta-Master',
+          spreader_length: '16.75" (42.5 cm)',
+          spreader_sweep: '30"-31.5" (76-80 cm) tip-to-tip',
+          jib_lead: useInches ? '90"-93" from tack' : '229-236 cm from tack',
+          jib_cloth_tension: 'Max halyard',
+          jib_height: useInches ? '4.5"-5" deck to tack' : '11.5-12.7 cm deck to tack',
+          jib_outboard_lead: 'Outboard',
+          cunningham: 'Max',
+          outhaul: 'Max',
+          vang: 'Heavy — vang-sheet in gusts',
+          centerboard_position: 'Aft 3/8"-5/8" mast pusher',
+          traveler_position: '5-7" / 13-18 cm below centerline',
+          augie_equalizer: 'Fully released',
+          mast_wiggle: '⚠️ Generic baseline — contact your sailmaker directly for heavy-air recommendations.'
         }
       }
     };
@@ -4335,8 +4678,17 @@ app.get("/magic", requireAuth, (req, res) => {
       const mainModel = document.getElementById('mg-main-model').value || '';
       const jibMakerVal = document.getElementById('mg-jib-maker').value;
       const jibModel = document.getElementById('mg-jib-model').value || '';
-      const jibMakerName = jibMakerVal === 'quantum' ? 'Quantum' : jibMakerVal === 'north' ? 'North' : 'Olimpic';
-      const makerName = maker === 'quantum' ? 'Quantum' : maker === 'north' ? 'North' : 'Olimpic';
+      const makerLabels = {
+        quantum: 'Quantum', north: 'North', olimpic: 'Olimpic',
+        pl: 'PL Sails (Pires de Lima)', vb: 'VB Voiles',
+        wb: 'WB Sails', ullman: 'Ullman Sails', custom: 'Custom'
+      };
+      const customMainMaker = (document.getElementById('mg-main-maker-custom') || {}).value || '';
+      const customMainModel = (document.getElementById('mg-main-model-custom') || {}).value || '';
+      const customJibMaker = (document.getElementById('mg-jib-maker-custom') || {}).value || '';
+      const customJibModel = (document.getElementById('mg-jib-model-custom') || {}).value || '';
+      const jibMakerName = jibMakerVal === 'custom' && customJibMaker ? customJibMaker : (makerLabels[jibMakerVal] || 'Quantum');
+      const makerName = maker === 'custom' && customMainMaker ? customMainMaker : (makerLabels[maker] || 'Quantum');
       const builderName = builder === 'jibetech' ? 'JibeTech' : 'DB/MAS/Persson';
 
       // Fetch user's race log data
