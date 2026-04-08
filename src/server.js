@@ -644,8 +644,8 @@ app.get('/manifest.json', (req, res) => {
     theme_color: '#0a1628',
     orientation: 'portrait',
     icons: [
-      { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any maskable' },
-      { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' }
+      { src: '/icons/icon-192x192.png', sizes: '192x192', type: 'image/png', purpose: 'any maskable' },
+      { src: '/icons/icon-512x512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' }
     ],
     screenshots: [
       { src: '/screenshots/screen1.png', sizes: '1280x720', type: 'image/png', form_factor: 'wide', label: 'Snipeovation desktop view' },
@@ -728,8 +728,8 @@ function serveIcon(size, cacheRef, res) {
     res.status(500).send('icon generation failed: ' + err.message);
   });
 }
-app.get(["/icons/icon-192.png", "/icon-192.png"], (req, res) => serveIcon(192, 192, res));
-app.get(["/icons/icon-512.png", "/icon-512.png"], (req, res) => serveIcon(512, 512, res));
+app.get(["/icons/icon-192x192.png", "/icons/icon-192.png", "/icon-192.png"], (req, res) => serveIcon(192, 192, res));
+app.get(["/icons/icon-512x512.png", "/icons/icon-512.png", "/icon-512.png"], (req, res) => serveIcon(512, 512, res));
 
 // Simple session store backed by SQLite
 class SQLiteSessionStore extends session.Store {
