@@ -5311,7 +5311,7 @@ app.get("/forecast", requireAuth, (req, res) => {
             <span>0</span><span>5</span><span>10</span><span>15</span><span>20</span><span>25+</span>
           </div>
           <div style="font-size:0.72rem;color:#78909c;margin-top:8px;line-height:1.5;">
-            Wind barbs follow standard meteorological convention. Shaft points in the direction the wind is blowing <em>toward</em>; ticks on the upwind side: half-tick = 5 kt, full tick = 10 kt, pennant (triangle) = 50 kt. Color = wind speed.
+            Streaming particles flow with the wind field; arrows show direction and the white number is speed in knots. Color = wind speed bucket.
           </div>
         </div>
       </div>
@@ -6137,7 +6137,9 @@ app.get("/forecast", requireAuth, (req, res) => {
     var GRID_N = 3;
     var hours = 18;
     var data = null;
-    var map = null, barbLayer = null, currentHour = 0, playTimer = null;
+    var map = null, arrowLayer = null, currentHour = 0, playTimer = null;
+    var particleCanvas = null, particleCtx = null, particles = [], rafId = null;
+    var MODEL_CHAIN = ['gfs_hrrr', 'best_match', 'gfs_global'];
 
     function speedColor(s) {
       if (s < 5) return '#1a3a5c';
@@ -6153,43 +6155,21 @@ app.get("/forecast", requireAuth, (req, res) => {
       return dirs[Math.round(((d % 360) / 22.5)) % 16];
     }
 
-    // Standard meteorological wind barb. dirFromDeg = direction wind comes FROM (Open-Meteo).
-    // Shaft points in the direction wind blows TOWARD; ticks on the upwind end.
-    function buildBarbSvg(speedKt, dirFromDeg, color) {
-      var size = 60, cx = size/2, cy = size/2, shaftLen = 26;
+    // Directional arrow with white speed label. dirFromDeg = direction wind comes FROM (Open-Meteo).
+    // Arrow points in the direction the wind is blowing TOWARD.
+    function buildArrowSvg(speedKt, dirFromDeg, color) {
+      var size = 64, cx = size/2, cy = size/2;
       var toDeg = (dirFromDeg + 180) % 360;
-      var rad = toDeg * Math.PI / 180;
-      var ux = Math.sin(rad), uy = -Math.cos(rad);
-      var x2 = cx + ux * shaftLen, y2 = cy + uy * shaftLen;
-      var s = Math.max(0, Math.round(speedKt / 5) * 5);
-      var pennants = Math.floor(s / 50); s -= pennants * 50;
-      var fulls = Math.floor(s / 10); s -= fulls * 10;
-      var halfs = Math.floor(s / 5);
-      var perpRad = (toDeg + 90) * Math.PI / 180;
-      var px = Math.sin(perpRad), py = -Math.cos(perpRad);
-      var tickSpacing = 4, tickLen = 9, marks = '', pos = 0;
-      for (var i = 0; i < pennants; i++) {
-        var bx = cx + ux * pos, by = cy + uy * pos;
-        var bx2 = cx + ux * (pos + tickSpacing), by2 = cy + uy * (pos + tickSpacing);
-        var tx = bx + px * tickLen, ty = by + py * tickLen;
-        marks += '<polygon points="' + bx + ',' + by + ' ' + bx2 + ',' + by2 + ' ' + tx + ',' + ty + '" fill="' + color + '"/>';
-        pos += tickSpacing + 1;
-      }
-      for (var j = 0; j < fulls; j++) {
-        var fbx = cx + ux * pos, fby = cy + uy * pos;
-        var ftx = fbx + px * tickLen, fty = fby + py * tickLen;
-        marks += '<line x1="' + fbx + '" y1="' + fby + '" x2="' + ftx + '" y2="' + fty + '" stroke="' + color + '" stroke-width="2"/>';
-        pos += tickSpacing;
-      }
-      for (var k = 0; k < halfs; k++) {
-        var hbx = cx + ux * pos, hby = cy + uy * pos;
-        var htx = hbx + px * (tickLen / 2), hty = hby + py * (tickLen / 2);
-        marks += '<line x1="' + hbx + '" y1="' + hby + '" x2="' + htx + '" y2="' + hty + '" stroke="' + color + '" stroke-width="2"/>';
-        pos += tickSpacing;
-      }
-      var calmDot = (speedKt < 2.5) ? '<circle cx="' + cx + '" cy="' + cy + '" r="3" fill="none" stroke="' + color + '" stroke-width="1.5"/>' : '';
-      var shaft = (speedKt >= 2.5) ? '<line x1="' + cx + '" y1="' + cy + '" x2="' + x2 + '" y2="' + y2 + '" stroke="' + color + '" stroke-width="2"/>' : '';
-      return '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '">' + shaft + marks + calmDot + '</svg>';
+      // Rotate arrow path: pointing up (north) by default, then rotate by toDeg.
+      // Arrow shaft length scales slightly with speed, capped.
+      var len = Math.min(22, 8 + speedKt * 0.6);
+      var arrow = '<g transform="translate(' + cx + ',' + cy + ') rotate(' + toDeg + ')">' +
+        '<line x1="0" y1="' + len + '" x2="0" y2="-' + len + '" stroke="' + color + '" stroke-width="3" stroke-linecap="round"/>' +
+        '<polygon points="0,-' + (len + 6) + ' -6,-' + (len - 2) + ' 6,-' + (len - 2) + '" fill="' + color + '"/>' +
+        '</g>';
+      // White speed label, centered at the bottom of the icon, with dark stroke for contrast.
+      var label = '<text x="' + cx + '" y="' + (size - 4) + '" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="13" font-weight="800" fill="#ffffff" stroke="#000000" stroke-width="3" paint-order="stroke" style="paint-order:stroke;">' + Math.round(speedKt) + '</text>';
+      return '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '">' + arrow + label + '</svg>';
     }
 
     function buildGrid(centerLat, centerLon) {
@@ -6202,15 +6182,18 @@ app.get("/forecast", requireAuth, (req, res) => {
       return pts;
     }
 
-    function fetchHrrr(centerLat, centerLon) {
-      var pts = buildGrid(centerLat, centerLon);
+    function fetchOneModel(pts, model) {
       var lats = pts.map(function(p) { return p.lat.toFixed(4); }).join(',');
       var lons = pts.map(function(p) { return p.lon.toFixed(4); }).join(',');
       var url = 'https://api.open-meteo.com/v1/forecast?latitude=' + lats + '&longitude=' + lons +
-                '&hourly=windspeed_10m,winddirection_10m,windgusts_10m&windspeed_unit=kn&forecast_days=1&models=gfs_hrrr';
-      return fetch(url).then(function(r) { return r.json(); }).then(function(json) {
+                '&hourly=windspeed_10m,winddirection_10m,windgusts_10m&windspeed_unit=kn&forecast_days=1&models=' + model;
+      return fetch(url).then(function(r) {
+        if (!r.ok) throw new Error(model + ' http ' + r.status);
+        return r.json();
+      }).then(function(json) {
         var arr = Array.isArray(json) ? json : [json];
-        var times = arr[0] && arr[0].hourly ? arr[0].hourly.time.slice(0, hours) : [];
+        var times = arr[0] && arr[0].hourly ? (arr[0].hourly.time || []).slice(0, hours) : [];
+        if (!times.length) throw new Error(model + ' empty');
         var points = arr.map(function(loc, idx) {
           var h = loc.hourly || {};
           return {
@@ -6221,22 +6204,131 @@ app.get("/forecast", requireAuth, (req, res) => {
             wg: (h.windgusts_10m || []).slice(0, hours)
           };
         });
-        return { times: times, points: points };
+        // Reject if every speed is null (model doesn't cover this location)
+        var anyData = points.some(function(p) { return p.ws.some(function(v) { return v != null; }); });
+        if (!anyData) throw new Error(model + ' no coverage');
+        return { times: times, points: points, model: model };
       });
+    }
+
+    function fetchHrrr(centerLat, centerLon) {
+      var pts = buildGrid(centerLat, centerLon);
+      // Try gfs_hrrr → best_match → gfs_global in sequence; resolve with first success.
+      return MODEL_CHAIN.reduce(function(prev, model) {
+        return prev.catch(function() { return fetchOneModel(pts, model); });
+      }, Promise.reject(new Error('init')));
+    }
+
+    // Bilinear interpolation of wind vector at (lat,lon) from the 3x3 grid for a given hour.
+    // Returns { u, v, speed } in screen-pixel direction (u east-positive, v south-positive),
+    // or null if outside grid bounds / no data.
+    function sampleWind(lat, lon, hour) {
+      if (!data) return null;
+      var pts = data.points;
+      var lats = [], lons = [];
+      for (var i = 0; i < GRID_N; i++) lats.push(pts[i * GRID_N].lat);
+      for (var j = 0; j < GRID_N; j++) lons.push(pts[j].lon);
+      // Grid is regular and sorted ascending.
+      if (lat < lats[0] || lat > lats[GRID_N - 1] || lon < lons[0] || lon > lons[GRID_N - 1]) return null;
+      var fi = (lat - lats[0]) / (lats[GRID_N - 1] - lats[0]) * (GRID_N - 1);
+      var fj = (lon - lons[0]) / (lons[GRID_N - 1] - lons[0]) * (GRID_N - 1);
+      var i0 = Math.floor(fi), j0 = Math.floor(fj);
+      var i1 = Math.min(GRID_N - 1, i0 + 1), j1 = Math.min(GRID_N - 1, j0 + 1);
+      var di = fi - i0, dj = fj - j0;
+      function vec(ix, jx) {
+        var p = pts[ix * GRID_N + jx];
+        var s = p.ws[hour], d = p.wd[hour];
+        if (s == null || d == null) return null;
+        var toRad = ((d + 180) % 360) * Math.PI / 180;
+        return { u: Math.sin(toRad) * s, v: -Math.cos(toRad) * s, s: s };
+      }
+      var v00 = vec(i0, j0), v01 = vec(i0, j1), v10 = vec(i1, j0), v11 = vec(i1, j1);
+      if (!v00 || !v01 || !v10 || !v11) return null;
+      var u = (1 - di) * ((1 - dj) * v00.u + dj * v01.u) + di * ((1 - dj) * v10.u + dj * v11.u);
+      var v = (1 - di) * ((1 - dj) * v00.v + dj * v01.v) + di * ((1 - dj) * v10.v + dj * v11.v);
+      var s = Math.sqrt(u * u + v * v);
+      return { u: u, v: v, speed: s };
+    }
+
+    function spawnParticle() {
+      if (!map) return null;
+      var sz = map.getSize();
+      return { x: Math.random() * sz.x, y: Math.random() * sz.y, age: Math.floor(Math.random() * 60) };
+    }
+
+    function tickParticles() {
+      rafId = null;
+      if (!particleCtx || !particleCanvas || !map || !data) return;
+      var w = particleCanvas.width, h = particleCanvas.height;
+      // Fade trail
+      particleCtx.globalCompositeOperation = 'destination-out';
+      particleCtx.fillStyle = 'rgba(0,0,0,0.10)';
+      particleCtx.fillRect(0, 0, w, h);
+      particleCtx.globalCompositeOperation = 'source-over';
+      var maxAge = 80;
+      var step = 0.6; // pixels per frame multiplier
+      for (var i = 0; i < particles.length; i++) {
+        var p = particles[i];
+        p.age++;
+        if (p.age > maxAge || p.x < 0 || p.y < 0 || p.x > w || p.y > h) {
+          var np = spawnParticle();
+          if (np) { p.x = np.x; p.y = np.y; p.age = 0; }
+          continue;
+        }
+        var ll = map.containerPointToLatLng([p.x, p.y]);
+        var s = sampleWind(ll.lat, ll.lng, currentHour);
+        if (!s) { p.age = maxAge + 1; continue; }
+        var nx = p.x + s.u * step;
+        var ny = p.y + s.v * step;
+        var color = speedColor(s.speed);
+        particleCtx.strokeStyle = color;
+        particleCtx.lineWidth = 1.4;
+        particleCtx.beginPath();
+        particleCtx.moveTo(p.x, p.y);
+        particleCtx.lineTo(nx, ny);
+        particleCtx.stroke();
+        p.x = nx; p.y = ny;
+      }
+      rafId = requestAnimationFrame(tickParticles);
+    }
+
+    function ensureParticles() {
+      if (!map) return;
+      var sz = map.getSize();
+      if (!particleCanvas) {
+        particleCanvas = document.createElement('canvas');
+        particleCanvas.style.position = 'absolute';
+        particleCanvas.style.top = '0';
+        particleCanvas.style.left = '0';
+        particleCanvas.style.pointerEvents = 'none';
+        particleCanvas.style.zIndex = '400';
+        map.getContainer().appendChild(particleCanvas);
+        particleCtx = particleCanvas.getContext('2d');
+      }
+      if (particleCanvas.width !== sz.x || particleCanvas.height !== sz.y) {
+        particleCanvas.width = sz.x;
+        particleCanvas.height = sz.y;
+      }
+      // Re-seed particles
+      particles = [];
+      var count = Math.min(800, Math.max(200, Math.floor((sz.x * sz.y) / 1500)));
+      for (var i = 0; i < count; i++) particles.push(spawnParticle());
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(tickParticles);
     }
 
     function renderFrame(hour) {
       if (!data || !map) return;
-      if (barbLayer) { barbLayer.clearLayers(); }
-      else { barbLayer = L.layerGroup().addTo(map); }
+      if (arrowLayer) { arrowLayer.clearLayers(); }
+      else { arrowLayer = L.layerGroup().addTo(map); }
       var sumWs = 0, maxGust = 0, sumDirX = 0, sumDirY = 0, n = 0;
       data.points.forEach(function(p) {
         var s = p.ws[hour], d = p.wd[hour], g = p.wg[hour];
         if (s == null || d == null) return;
         var color = speedColor(s);
-        var svg = buildBarbSvg(s, d, color);
-        var icon = L.divIcon({ className: 'hrrr-barb', html: svg, iconSize: [60, 60], iconAnchor: [30, 30] });
-        L.marker([p.lat, p.lon], { icon: icon, interactive: false }).addTo(barbLayer);
+        var svg = buildArrowSvg(s, d, color);
+        var icon = L.divIcon({ className: 'hrrr-arrow', html: svg, iconSize: [64, 64], iconAnchor: [32, 32] });
+        L.marker([p.lat, p.lon], { icon: icon, interactive: false }).addTo(arrowLayer);
         sumWs += s; if (g != null && g > maxGust) maxGust = g;
         var rad = d * Math.PI / 180;
         sumDirX += Math.sin(rad); sumDirY += Math.cos(rad);
@@ -6272,12 +6364,15 @@ app.get("/forecast", requireAuth, (req, res) => {
       fetchHrrr(centerLat, centerLon).then(function(d) {
         data = d;
         if (!data.points.length || !data.points[0].ws.length) {
-          document.getElementById('hrrr-location-label').textContent = locLabel + ' — no HRRR data for this location (HRRR is US-only; Open-Meteo will fall back to GFS outside CONUS).';
+          document.getElementById('hrrr-location-label').textContent = locLabel + ' — no wind data for this location.';
           return;
         }
+        document.getElementById('hrrr-location-label').textContent = locLabel + ' (' + centerLat.toFixed(2) + ', ' + centerLon.toFixed(2) + ') · model: ' + data.model;
         renderFrame(0);
+        ensureParticles();
+        map.on('moveend zoomend resize', function() { ensureParticles(); renderFrame(currentHour); });
       }).catch(function(err) {
-        document.getElementById('hrrr-location-label').textContent = locLabel + ' — failed to load wind forecast: ' + err.message;
+        document.getElementById('hrrr-location-label').textContent = locLabel + ' — all model fetches failed (' + err.message + ').';
       });
     }
 
