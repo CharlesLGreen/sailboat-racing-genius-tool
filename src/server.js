@@ -625,6 +625,9 @@ db.pragma("foreign_keys = ON");
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
+// Diagnostic route — if this 404s in production, the request isn't reaching Express at all.
+app.get('/ping', (req, res) => res.send('pong'));
+
 // --- PWA MANIFEST & SERVICE WORKER ---
 // IMPORTANT: declared BEFORE express.static so static files can never shadow them.
 // Inline strings, no filesystem dependency, no auth middleware in front of them.
