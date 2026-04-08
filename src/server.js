@@ -643,6 +643,8 @@ app.get('/manifest.json', (req, res) => {
     background_color: '#0a1628',
     theme_color: '#0a1628',
     orientation: 'portrait',
+    categories: ['sports', 'navigation'],
+    prefer_related_applications: false,
     icons: [
       { src: '/icons/icon-192x192.png', sizes: '192x192', type: 'image/png', purpose: 'any maskable' },
       { src: '/icons/icon-512x512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' }
