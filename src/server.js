@@ -629,14 +629,14 @@ app.use(express.static(path.join(__dirname, "public")));
 // --- PWA MANIFEST & SERVICE WORKER ---
 app.get("/manifest.json", (req, res) => {
   res.json({
-    name: "Charlie's Snipeovation Snipe Sailboat Racing Genius Tool!",
+    name: "Snipeovation",
     short_name: "Snipeovation",
-    description: "Snipe sailboat racing logs, tuning, forecasts & more",
+    description: "AI-powered Snipe sailing coach and racing tool",
     start_url: "/",
     display: "standalone",
-    background_color: "#f5f7fa",
-    theme_color: "#0b3d6e",
-    orientation: "any",
+    background_color: "#0a1628",
+    theme_color: "#0a1628",
+    orientation: "portrait",
     icons: [
       { src: "/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any maskable" },
       { src: "/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any maskable" }
@@ -649,7 +649,7 @@ app.get("/manifest.json", (req, res) => {
 app.get("/sw.js", (req, res) => {
   res.type("application/javascript");
   res.send(`
-    const CACHE_NAME = 'snipeovation-v3';
+    const CACHE_NAME = 'snipeovation-v4';
     const PRECACHE = ['/', '/logo.jpg', '/hero8.jpg'];
 
     self.addEventListener('install', e => {
@@ -1144,7 +1144,7 @@ app.get("/coaching-beta", (req, res) => {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#0b3d6e">
+  <meta name="theme-color" content="#0a1628">
   <title>Snipeovation AI Coaching + Vakaros Beta</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -7360,7 +7360,7 @@ function renderPage(content, user, lang, showHero) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#0b3d6e">
+  <meta name="theme-color" content="#0a1628">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Snipeovation">
@@ -10223,7 +10223,7 @@ function renderSharePage(title, content) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#0b3d6e">
+  <meta name="theme-color" content="#0a1628">
   <title>${escapeHtml(title)} — Snipeovation</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
