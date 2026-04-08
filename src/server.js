@@ -634,6 +634,7 @@ app.get('/ping', (req, res) => res.send('pong'));
 app.get('/manifest.json', (req, res) => {
   res.setHeader('Content-Type', 'application/manifest+json');
   res.send(JSON.stringify({
+    id: '/',
     name: 'Snipeovation',
     short_name: 'Snipeovation',
     description: 'AI-powered Snipe sailing coach and racing tool',
@@ -643,8 +644,12 @@ app.get('/manifest.json', (req, res) => {
     theme_color: '#0a1628',
     orientation: 'portrait',
     icons: [
-      { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
-      { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' }
+      { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any maskable' },
+      { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' }
+    ],
+    screenshots: [
+      { src: '/screenshots/screen1.png', sizes: '1280x720', type: 'image/png', form_factor: 'wide', label: 'Snipeovation desktop view' },
+      { src: '/screenshots/screen2.png', sizes: '390x844', type: 'image/png', form_factor: 'narrow', label: 'Snipeovation mobile view' }
     ],
     share_target: {
       action: '/vakaros/share',
@@ -654,6 +659,37 @@ app.get('/manifest.json', (req, res) => {
     }
   }));
 });
+
+// PWA screenshot placeholders — generated on demand with sharp, cached in memory.
+var screenshotCache = {};
+function makeScreenshotPng(width, height) {
+  var sharp = require('sharp');
+  var fontSize = Math.round(Math.min(width, height) / 8);
+  var subSize = Math.round(fontSize / 3);
+  var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '">' +
+    '<rect width="100%" height="100%" fill="#0a1628"/>' +
+    '<text x="50%" y="50%" font-family="Segoe UI,Arial,sans-serif" font-size="' + fontSize + '" font-weight="800" fill="#ffffff" text-anchor="middle" dominant-baseline="middle">Snipeovation</text>' +
+    '<text x="50%" y="' + (height / 2 + fontSize) + '" font-family="Segoe UI,Arial,sans-serif" font-size="' + subSize + '" fill="#90caf9" text-anchor="middle">' + width + '×' + height + '</text>' +
+    '</svg>';
+  return sharp(Buffer.from(svg)).png().toBuffer();
+}
+function serveScreenshot(width, height, key, res) {
+  if (screenshotCache[key]) {
+    res.type('png');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    return res.send(screenshotCache[key]);
+  }
+  makeScreenshotPng(width, height).then(function(buf) {
+    screenshotCache[key] = buf;
+    res.type('png');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.send(buf);
+  }).catch(function(err) {
+    res.status(500).send('screenshot generation failed: ' + err.message);
+  });
+}
+app.get('/screenshots/screen1.png', (req, res) => serveScreenshot(1280, 720, 'screen1', res));
+app.get('/screenshots/screen2.png', (req, res) => serveScreenshot(390, 844, 'screen2', res));
 
 app.get('/sw.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');
