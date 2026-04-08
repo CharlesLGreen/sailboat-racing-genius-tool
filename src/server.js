@@ -5409,7 +5409,10 @@ app.get("/forecast", requireAuth, (req, res) => {
     function loadForecast(lat, lon, locName) {
       var statusEl = document.getElementById('location-status');
       statusEl.innerHTML = '${L("locating")} <b>' + (locName || (lat.toFixed(2) + ', ' + lon.toFixed(2))) + '</b>';
-      try { window.dispatchEvent(new CustomEvent('forecast-location-changed', { detail: { lat: lat, lon: lon } })); } catch(e) {}
+      try {
+        window.__forecastLocation = { lat: lat, lon: lon, name: locName || null };
+        window.dispatchEvent(new CustomEvent('forecast-location-changed', { detail: { lat: lat, lon: lon, name: locName || null } }));
+      } catch(e) {}
 
       fetch('/api/forecast?lat=' + lat + '&lon=' + lon)
         .then(function(r) { return r.json(); })
@@ -6356,6 +6359,22 @@ app.get("/forecast", requireAuth, (req, res) => {
         if (locEl) locEl.textContent = 'Leaflet failed to load.';
         return;
       }
+      // If already initialized, just re-center and refetch.
+      if (map) {
+        map.setView([centerLat, centerLon], 10);
+        if (arrowLayer) arrowLayer.clearLayers();
+        if (particleCtx && particleCanvas) particleCtx.clearRect(0, 0, particleCanvas.width, particleCanvas.height);
+        fetchHrrr(centerLat, centerLon).then(function(d) {
+          data = d;
+          if (!data.points.length || !data.points[0].ws.length) return;
+          if (locEl) locEl.textContent = locLabel + ' (' + centerLat.toFixed(2) + ', ' + centerLon.toFixed(2) + ') · model: ' + data.model;
+          renderFrame(currentHour);
+          ensureParticles();
+        }).catch(function(err) {
+          if (locEl) locEl.textContent = locLabel + ' — all model fetches failed (' + err.message + ').';
+        });
+        return;
+      }
       map = L.map('hrrr-wind-map', { zoomControl: true, attributionControl: true }).setView([centerLat, centerLon], 10);
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 18,
@@ -6399,15 +6418,45 @@ app.get("/forecast", requireAuth, (req, res) => {
           }
         });
       }
-      if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-          function(pos) { initMap(pos.coords.latitude, pos.coords.longitude, 'Your location'); },
-          function() { initMap(FALLBACK_LAT, FALLBACK_LON, 'Miami, FL (default)'); },
-          { timeout: 6000, maximumAge: 600000 }
-        );
-      } else {
-        initMap(FALLBACK_LAT, FALLBACK_LON, 'Miami, FL (default)');
+      // Always re-init when the user changes the forecast-page location.
+      window.addEventListener('forecast-location-changed', function(e) {
+        if (e && e.detail && typeof e.detail.lat === 'number' && typeof e.detail.lon === 'number') {
+          var lbl = e.detail.name || 'Selected location';
+          initMap(e.detail.lat, e.detail.lon, lbl);
+        }
+      });
+
+      // 1) Selected location already set by the forecast page → use it immediately.
+      var preset = window.__forecastLocation;
+      if (preset && typeof preset.lat === 'number' && typeof preset.lon === 'number') {
+        initMap(preset.lat, preset.lon, preset.name || 'Selected location');
+        return;
       }
+
+      // 2) Otherwise, give the forecast page a brief window to dispatch its location event.
+      //    If nothing arrives in 1500 ms, fall back to geolocation → Miami.
+      var initialized = false;
+      function onceFromEvent(e) {
+        if (initialized) return;
+        if (e && e.detail && typeof e.detail.lat === 'number' && typeof e.detail.lon === 'number') {
+          initialized = true;
+          initMap(e.detail.lat, e.detail.lon, e.detail.name || 'Selected location');
+        }
+      }
+      window.addEventListener('forecast-location-changed', onceFromEvent);
+      setTimeout(function() {
+        if (initialized) return;
+        initialized = true;
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(
+            function(pos) { initMap(pos.coords.latitude, pos.coords.longitude, 'Your location'); },
+            function() { initMap(FALLBACK_LAT, FALLBACK_LON, 'Miami, FL (default)'); },
+            { timeout: 6000, maximumAge: 600000 }
+          );
+        } else {
+          initMap(FALLBACK_LAT, FALLBACK_LON, 'Miami, FL (default)');
+        }
+      }, 1500);
     }
 
     if (document.readyState === 'loading') {
