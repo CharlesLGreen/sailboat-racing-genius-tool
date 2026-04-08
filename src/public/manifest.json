@@ -1,10 +1,12 @@
 {
-  "name": "Snipeovation Snipe Racing Genius Tool",
+  "name": "Snipeovation",
   "short_name": "Snipeovation",
+  "description": "AI-powered Snipe sailing coach and racing tool",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0b3d6e",
-  "theme_color": "#0b3d6e",
+  "background_color": "#0a1628",
+  "theme_color": "#0a1628",
+  "orientation": "portrait",
   "icons": [
     {
       "src": "/icon-192.png",
@@ -13,12 +15,14 @@
       "purpose": "any maskable"
     },
     {
-      "src": "/icon-192.png",
+      "src": "/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
     }
   ],
+  "categories": ["sports", "lifestyle"],
+  "lang": "en",
   "share_target": {
     "action": "/vakaros/share",
     "method": "POST",
