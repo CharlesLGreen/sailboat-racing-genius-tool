@@ -624,61 +624,54 @@ db.pragma("foreign_keys = ON");
 // Middleware
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
-app.use(express.static(path.join(__dirname, "public")));
 
 // --- PWA MANIFEST & SERVICE WORKER ---
-app.get("/manifest.json", (req, res) => {
-  res.json({
-    name: "Snipeovation",
-    short_name: "Snipeovation",
-    description: "AI-powered Snipe sailing coach and racing tool",
-    start_url: "/",
-    display: "standalone",
-    background_color: "#0a1628",
-    theme_color: "#0a1628",
-    orientation: "portrait",
+// IMPORTANT: declared BEFORE express.static so static files can never shadow them.
+// Inline strings, no filesystem dependency, no auth middleware in front of them.
+app.get('/manifest.json', (req, res) => {
+  res.setHeader('Content-Type', 'application/manifest+json');
+  res.send(JSON.stringify({
+    name: 'Snipeovation',
+    short_name: 'Snipeovation',
+    description: 'AI-powered Snipe sailing coach and racing tool',
+    start_url: '/',
+    display: 'standalone',
+    background_color: '#0a1628',
+    theme_color: '#0a1628',
+    orientation: 'portrait',
     icons: [
-      { src: "/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any maskable" },
-      { src: "/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any maskable" }
+      { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' }
     ],
-    categories: ["sports", "lifestyle"],
-    lang: "en"
-  });
+    share_target: {
+      action: '/vakaros/share',
+      method: 'POST',
+      enctype: 'multipart/form-data',
+      params: { files: [{ name: 'file', accept: ['text/csv', '.csv', '.vkx', 'text/plain', '.txt'] }] }
+    }
+  }));
 });
 
-app.get("/sw.js", (req, res) => {
-  res.type("application/javascript");
-  res.send(`
-    const CACHE_NAME = 'snipeovation-v4';
-    const PRECACHE = ['/', '/logo.jpg', '/hero8.jpg'];
-
-    self.addEventListener('install', e => {
-      e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(PRECACHE)).then(() => self.skipWaiting()));
-    });
-
-    self.addEventListener('activate', e => {
-      e.waitUntil(caches.keys().then(keys =>
-        Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
-      ).then(() => self.clients.claim()));
-    });
-
-    self.addEventListener('fetch', e => {
-      if (e.request.method !== 'GET') return;
-      e.respondWith(
-        fetch(e.request).then(resp => {
-          if (resp.ok) {
-            const clone = resp.clone();
-            caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
-          }
-          return resp;
-        }).catch(() => caches.match(e.request))
-      );
-    });
-  `);
+app.get('/sw.js', (req, res) => {
+  res.setHeader('Content-Type', 'application/javascript');
+  res.setHeader('Service-Worker-Allowed', '/');
+  res.send(`const CACHE='snipeovation-v4';self.addEventListener('install',e=>self.skipWaiting());self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k))))));self.addEventListener('fetch',e=>{if(e.request.method==='POST'&&new URL(e.request.url).pathname==='/vakaros/share'){e.respondWith((async()=>{var fd=await e.request.formData();var f=fd.get('file');var nfd=new FormData();if(f)nfd.append('file',f);return fetch('/vakaros/share',{method:'POST',body:nfd,credentials:'same-origin'});})());return;}if(e.request.method!=='GET')return;e.respondWith(fetch(e.request).catch(()=>caches.match(e.request)));});`);
 });
+
+app.use(express.static(path.join(__dirname, "public")));
 
 // Generate PWA icons dynamically from logo
 let iconCache192 = null, iconCache512 = null;
+
+app.get(["/icons/icon-192.png", "/icons/icon-512.png"], (req, res) => {
+  const logoPath = path.join(__dirname, 'public', 'logo.jpg');
+  if (fs.existsSync(logoPath)) {
+    res.type('image/jpeg');
+    res.send(fs.readFileSync(logoPath));
+  } else {
+    res.status(404).end();
+  }
+});
 
 app.get("/icon-192.png", (req, res) => {
   if (iconCache192) { res.type('png'); return res.send(iconCache192); }
