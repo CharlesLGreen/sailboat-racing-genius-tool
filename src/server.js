@@ -6266,7 +6266,7 @@ app.get("/forecast", requireAuth, (req, res) => {
       particleCtx.fillRect(0, 0, w, h);
       particleCtx.globalCompositeOperation = 'source-over';
       var maxAge = 80;
-      var step = 0.6; // pixels per frame multiplier
+      var step = 0.23; // pixels per frame multiplier
       for (var i = 0; i < particles.length; i++) {
         var p = particles[i];
         p.age++;
