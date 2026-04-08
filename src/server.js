@@ -5284,9 +5284,9 @@ app.get("/forecast", requireAuth, (req, res) => {
           <span id="hrrr-time-label" style="color:#fff;font-weight:700;font-size:0.95rem;">+0h</span>
           <button id="hrrr-play-btn" type="button" style="background:#1d6ea5;color:#fff;border:none;border-radius:6px;padding:6px 14px;cursor:pointer;font-weight:700;font-size:0.85rem;">▶ Play</button>
         </div>
-        <input type="range" id="hrrr-time-slider" min="0" max="17" value="0" step="1" style="width:100%;">
+        <input type="range" id="hrrr-time-slider" min="0" max="47" value="0" step="1" style="width:100%;">
         <div style="display:flex;justify-content:space-between;font-size:0.75rem;color:#78909c;margin-top:4px;">
-          <span>Now</span><span>+6h</span><span>+12h</span><span>+17h</span>
+          <span>Now</span><span>+2h</span><span>+4h</span><span>+6h</span><span>+8h</span>
         </div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px;">
           <div style="background:rgba(255,255,255,0.06);border-radius:8px;padding:10px;text-align:center;">
@@ -6138,9 +6138,13 @@ app.get("/forecast", requireAuth, (req, res) => {
     var FALLBACK_LAT = 25.77, FALLBACK_LON = -80.19;
     var GRID_STEP = 0.05;
     var GRID_N = 3;
-    var hours = 18;
+    var STEP_MIN = 10;            // forecast step in minutes
+    var STEPS = 48;               // 8 hours x 6 steps/hour
+    var HOURS_TO_FETCH = 9;       // need hour 0..8 to interpolate steps 0..47
+    var SUBSTEPS_PER_HOUR = 60 / STEP_MIN; // 6
+    var hours = HOURS_TO_FETCH;   // (kept name for fetch slicing)
     var data = null;
-    var map = null, arrowLayer = null, currentHour = 0, playTimer = null;
+    var map = null, arrowLayer = null, currentStep = 0, playTimer = null;
     var particleCanvas = null, particleCtx = null, particles = [], rafId = null;
     var MODEL_CHAIN = ['gfs_hrrr', 'best_match', 'gfs_global'];
 
@@ -6185,6 +6189,35 @@ app.get("/forecast", requireAuth, (req, res) => {
       return pts;
     }
 
+    // Linear interp between hourly values to STEPS 10-minute steps.
+    // Wind direction uses circular (u/v vector) interpolation so 359°→1° doesn't whip across.
+    function interpolatePoint(hourlyWs, hourlyWd, hourlyWg) {
+      var ws = new Array(STEPS), wd = new Array(STEPS), wg = new Array(STEPS);
+      for (var i = 0; i < STEPS; i++) {
+        var hr = i / SUBSTEPS_PER_HOUR;
+        var i0 = Math.floor(hr), i1 = Math.min(HOURS_TO_FETCH - 1, i0 + 1);
+        var t = hr - i0;
+        var s0 = hourlyWs[i0], s1 = hourlyWs[i1];
+        var g0 = hourlyWg[i0], g1 = hourlyWg[i1];
+        var d0 = hourlyWd[i0], d1 = hourlyWd[i1];
+        if (s0 == null || s1 == null || d0 == null || d1 == null) {
+          ws[i] = null; wd[i] = null; wg[i] = null;
+          continue;
+        }
+        ws[i] = s0 + (s1 - s0) * t;
+        wg[i] = (g0 != null && g1 != null) ? (g0 + (g1 - g0) * t) : null;
+        // Circular interp via u/v components, weighted by speed so calm hours don't dominate.
+        var r0 = d0 * Math.PI / 180, r1 = d1 * Math.PI / 180;
+        var u0 = Math.sin(r0) * s0, v0 = Math.cos(r0) * s0;
+        var u1 = Math.sin(r1) * s1, v1 = Math.cos(r1) * s1;
+        var u = u0 + (u1 - u0) * t, v = v0 + (v1 - v0) * t;
+        var deg = Math.atan2(u, v) * 180 / Math.PI;
+        if (deg < 0) deg += 360;
+        wd[i] = deg;
+      }
+      return { ws: ws, wd: wd, wg: wg };
+    }
+
     function fetchOneModel(pts, model) {
       var lats = pts.map(function(p) { return p.lat.toFixed(4); }).join(',');
       var lons = pts.map(function(p) { return p.lon.toFixed(4); }).join(',');
@@ -6195,22 +6228,24 @@ app.get("/forecast", requireAuth, (req, res) => {
         return r.json();
       }).then(function(json) {
         var arr = Array.isArray(json) ? json : [json];
-        var times = arr[0] && arr[0].hourly ? (arr[0].hourly.time || []).slice(0, hours) : [];
-        if (!times.length) throw new Error(model + ' empty');
+        var hourlyTimes = arr[0] && arr[0].hourly ? (arr[0].hourly.time || []).slice(0, HOURS_TO_FETCH) : [];
+        if (hourlyTimes.length < HOURS_TO_FETCH) throw new Error(model + ' too few hours');
+        // Build STEPS step-times from the first hourly time + i*STEP_MIN minutes.
+        var t0 = new Date(hourlyTimes[0]).getTime();
+        var stepTimes = new Array(STEPS);
+        for (var k = 0; k < STEPS; k++) stepTimes[k] = new Date(t0 + k * STEP_MIN * 60000).toISOString();
+
         var points = arr.map(function(loc, idx) {
           var h = loc.hourly || {};
-          return {
-            lat: pts[idx].lat,
-            lon: pts[idx].lon,
-            ws: (h.windspeed_10m || []).slice(0, hours),
-            wd: (h.winddirection_10m || []).slice(0, hours),
-            wg: (h.windgusts_10m || []).slice(0, hours)
-          };
+          var hws = (h.windspeed_10m || []).slice(0, HOURS_TO_FETCH);
+          var hwd = (h.winddirection_10m || []).slice(0, HOURS_TO_FETCH);
+          var hwg = (h.windgusts_10m || []).slice(0, HOURS_TO_FETCH);
+          var interp = interpolatePoint(hws, hwd, hwg);
+          return { lat: pts[idx].lat, lon: pts[idx].lon, ws: interp.ws, wd: interp.wd, wg: interp.wg };
         });
-        // Reject if every speed is null (model doesn't cover this location)
         var anyData = points.some(function(p) { return p.ws.some(function(v) { return v != null; }); });
         if (!anyData) throw new Error(model + ' no coverage');
-        return { times: times, points: points, model: model };
+        return { times: stepTimes, points: points, model: model };
       });
     }
 
@@ -6279,7 +6314,7 @@ app.get("/forecast", requireAuth, (req, res) => {
           continue;
         }
         var ll = map.containerPointToLatLng([p.x, p.y]);
-        var s = sampleWind(ll.lat, ll.lng, currentHour);
+        var s = sampleWind(ll.lat, ll.lng, currentStep);
         if (!s) { p.age = maxAge + 1; continue; }
         var nx = p.x + s.u * step;
         var ny = p.y + s.v * step;
@@ -6344,10 +6379,16 @@ app.get("/forecast", requireAuth, (req, res) => {
         document.getElementById('hrrr-stat-gust').textContent = maxGust.toFixed(1);
         document.getElementById('hrrr-stat-dir').textContent = degToCompass(meanDir);
       }
-      var label = '+' + hour + 'h';
+      var minsAhead = hour * STEP_MIN;
+      var hh = Math.floor(minsAhead / 60), mm = minsAhead % 60;
+      var off;
+      if (hh === 0) off = '+' + mm + 'min';
+      else if (mm === 0) off = '+' + hh + 'h';
+      else off = '+' + hh + 'h ' + mm + 'min';
+      var label = off;
       if (data.times[hour]) {
         var t = new Date(data.times[hour]);
-        label += '  ' + t.toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+        label = t.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + '  ' + off;
       }
       document.getElementById('hrrr-time-label').textContent = label;
     }
@@ -6368,7 +6409,7 @@ app.get("/forecast", requireAuth, (req, res) => {
           data = d;
           if (!data.points.length || !data.points[0].ws.length) return;
           if (locEl) locEl.textContent = locLabel + ' (' + centerLat.toFixed(2) + ', ' + centerLon.toFixed(2) + ') · model: ' + data.model;
-          renderFrame(currentHour);
+          renderFrame(currentStep);
           ensureParticles();
         }).catch(function(err) {
           if (locEl) locEl.textContent = locLabel + ' — all model fetches failed (' + err.message + ').';
@@ -6389,7 +6430,7 @@ app.get("/forecast", requireAuth, (req, res) => {
         document.getElementById('hrrr-location-label').textContent = locLabel + ' (' + centerLat.toFixed(2) + ', ' + centerLon.toFixed(2) + ') · model: ' + data.model;
         renderFrame(0);
         ensureParticles();
-        map.on('moveend zoomend resize', function() { ensureParticles(); renderFrame(currentHour); });
+        map.on('moveend zoomend resize', function() { ensureParticles(); renderFrame(currentStep); });
       }).catch(function(err) {
         document.getElementById('hrrr-location-label').textContent = locLabel + ' — all model fetches failed (' + err.message + ').';
       });
@@ -6400,8 +6441,8 @@ app.get("/forecast", requireAuth, (req, res) => {
       var playBtn = document.getElementById('hrrr-play-btn');
       if (slider) {
         slider.addEventListener('input', function() {
-          currentHour = parseInt(slider.value, 10) || 0;
-          renderFrame(currentHour);
+          currentStep = parseInt(slider.value, 10) || 0;
+          renderFrame(currentStep);
         });
       }
       if (playBtn) {
@@ -6411,10 +6452,10 @@ app.get("/forecast", requireAuth, (req, res) => {
           } else {
             playBtn.textContent = '⏸ Pause';
             playTimer = setInterval(function() {
-              currentHour = (currentHour + 1) % hours;
-              if (slider) slider.value = currentHour;
-              renderFrame(currentHour);
-            }, 800);
+              currentStep = (currentStep + 1) % STEPS;
+              if (slider) slider.value = currentStep;
+              renderFrame(currentStep);
+            }, 600);
           }
         });
       }
