@@ -6769,7 +6769,7 @@ app.get("/forecast", requireAuth, (req, res) => {
       var key = frame.path;
       if (!tileLayers[key]) {
         var url = TILE_HOST + frame.path + '/' + TILE_SIZE + '/{z}/{x}/{y}/' + COLOR_SCHEME + '/' + SMOOTHING + '_' + SNOW + '.png';
-        tileLayers[key] = L.tileLayer(url, { tileSize: 256, opacity: 0, zIndex: 10, attribution: '&copy; <a href="https://www.rainviewer.com/">RainViewer</a>' });
+        tileLayers[key] = L.tileLayer(url, { tileSize: 256, opacity: 0, zIndex: 10, minZoom: 7, maxZoom: 10, maxNativeZoom: 10, attribution: '&copy; <a href="https://www.rainviewer.com/">RainViewer</a>' });
         tileLayers[key].addTo(map);
       }
       // Hide all but the current; fade-in current.
@@ -6807,10 +6807,10 @@ app.get("/forecast", requireAuth, (req, res) => {
         return;
       }
       if (!mapInited) {
-        map = L.map('radar-map', { zoomControl: true, attributionControl: true, minZoom: 6 }).setView([centerLat, centerLon], 8);
+        map = L.map('radar-map', { zoomControl: true, attributionControl: true, minZoom: 7, maxZoom: 10 }).setView([centerLat, centerLon], 8);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-          minZoom: 6,
-          maxZoom: 18,
+          minZoom: 7,
+          maxZoom: 10,
           attribution: '&copy; OpenStreetMap contributors'
         }).addTo(map);
         mapInited = true;
