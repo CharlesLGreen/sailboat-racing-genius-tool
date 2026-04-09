@@ -5525,6 +5525,36 @@ app.get("/forecast", requireAuth, (req, res) => {
       </div>
     </div>
 
+    <!-- ============================================ -->
+    <!-- RAINVIEWER RADAR MAP (free, no API key)      -->
+    <!-- Standalone, isolated from other IIFEs        -->
+    <!-- ============================================ -->
+    <div style="background:#0a1628;color:#e8eaf0;border-radius:14px;padding:20px;margin-bottom:20px;box-shadow:0 2px 12px rgba(0,0,0,0.15);">
+      <h3 style="color:#90caf9;margin:0 0 4px;display:flex;align-items:center;gap:8px;">🌧️ Radar map <span style="font-size:0.7rem;color:#78909c;font-weight:400;">via RainViewer</span></h3>
+      <div id="radar-location-label" style="font-size:0.82rem;color:#90a4ae;margin-bottom:12px;">Loading radar…</div>
+      <div id="radar-map" style="height:420px;border-radius:10px;background:#06101a;"></div>
+      <div style="margin-top:14px;background:rgba(255,255,255,0.05);border-radius:10px;padding:14px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:10px;">
+          <strong style="color:#90caf9;font-size:0.88rem;">Frame:</strong>
+          <span id="radar-time-label" style="color:#fff;font-weight:700;font-size:0.95rem;">—</span>
+          <button id="radar-play-btn" type="button" style="background:#1d6ea5;color:#fff;border:none;border-radius:6px;padding:6px 14px;cursor:pointer;font-weight:700;font-size:0.85rem;">▶ Play</button>
+        </div>
+        <input type="range" id="radar-time-slider" min="0" max="0" value="0" step="1" style="width:100%;">
+        <div style="display:flex;justify-content:space-between;font-size:0.75rem;color:#78909c;margin-top:4px;">
+          <span id="radar-past-label">Past</span><span>Now</span><span id="radar-future-label">Nowcast</span>
+        </div>
+        <div style="margin-top:14px;">
+          <div style="height:12px;border-radius:6px;background:linear-gradient(to right,#08306b 0%,#2171b5 20%,#6baed6 40%,#9ecae1 50%,#fd8d3c 65%,#e6550d 80%,#a50f15 100%);"></div>
+          <div style="display:flex;justify-content:space-between;font-size:0.7rem;color:#78909c;margin-top:4px;">
+            <span>Light</span><span>Moderate</span><span>Heavy</span><span>Intense</span>
+          </div>
+          <div style="font-size:0.72rem;color:#78909c;margin-top:8px;line-height:1.5;">
+            Past frames (last ~2 hours) and nowcast frames (next ~30 min) from RainViewer's global radar composite. Updated every 10 minutes. Color shows precipitation intensity.
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Tide/Current Chart -->
     <div id="tide-section" style="display:none;background:white;border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
       <h3 style="color:#0b3d6e;margin-top:0;">🌊 ${L('tideForecast')}</h3>
@@ -6712,6 +6742,161 @@ app.get("/forecast", requireAuth, (req, res) => {
       document.addEventListener('DOMContentLoaded', startHrrr);
     } else {
       startHrrr();
+    }
+  })();
+  </script>
+
+  <!-- RainViewer Radar Map: standalone, isolated IIFE, free public API, no key -->
+  <script>
+  (function() {
+    var FALLBACK_LAT = 25.77, FALLBACK_LON = -80.19;
+    var TILE_HOST = 'https://tilecache.rainviewer.com';
+    var TILE_SIZE = 256;     // 256 or 512
+    var COLOR_SCHEME = 2;    // 0=BW, 1=Original, 2=Universal Blue, 3=TITAN, 4=The Weather Channel, 6=NEXRAD level III, 7=Rainbow @ SELEX-IS, 8=Dark Sky
+    var SMOOTHING = 1, SNOW = 1;
+    var map = null, frames = [], tileLayers = {}, currentIdx = 0, playTimer = null, mapInited = false;
+
+    function fmtTime(unix) {
+      var d = new Date(unix * 1000);
+      return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    }
+
+    function loadFrame(idx) {
+      if (!frames.length || !map) return;
+      idx = ((idx % frames.length) + frames.length) % frames.length;
+      currentIdx = idx;
+      var frame = frames[idx];
+      var key = frame.path;
+      if (!tileLayers[key]) {
+        var url = TILE_HOST + frame.path + '/' + TILE_SIZE + '/{z}/{x}/{y}/' + COLOR_SCHEME + '/' + SMOOTHING + '_' + SNOW + '.png';
+        tileLayers[key] = L.tileLayer(url, { tileSize: 256, opacity: 0, zIndex: 10, attribution: '&copy; <a href="https://www.rainviewer.com/">RainViewer</a>' });
+        tileLayers[key].addTo(map);
+      }
+      // Hide all but the current; fade-in current.
+      Object.keys(tileLayers).forEach(function(k) {
+        tileLayers[k].setOpacity(k === key ? 0.7 : 0);
+      });
+      var slider = document.getElementById('radar-time-slider');
+      if (slider) slider.value = idx;
+      var label = document.getElementById('radar-time-label');
+      var nowOffset = idx - (frames.pastCount - 1);
+      var rel;
+      if (nowOffset === 0) rel = 'Now';
+      else if (nowOffset < 0) rel = nowOffset * 10 + ' min';
+      else rel = '+' + (nowOffset * 10) + ' min';
+      if (label) label.textContent = fmtTime(frame.time) + '  (' + rel + ')';
+    }
+
+    function fetchFrames() {
+      return fetch('https://api.rainviewer.com/public/weather-maps.json')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var past = (data.radar && data.radar.past) || [];
+          var nowcast = (data.radar && data.radar.nowcast) || [];
+          var combined = past.concat(nowcast);
+          combined.pastCount = past.length;
+          return combined;
+        });
+    }
+
+    function initMap(centerLat, centerLon, locLabel) {
+      var locEl = document.getElementById('radar-location-label');
+      if (locEl) locEl.textContent = locLabel + ' (' + centerLat.toFixed(2) + ', ' + centerLon.toFixed(2) + ')';
+      if (typeof L === 'undefined') {
+        if (locEl) locEl.textContent = 'Leaflet failed to load.';
+        return;
+      }
+      if (!mapInited) {
+        map = L.map('radar-map', { zoomControl: true, attributionControl: true }).setView([centerLat, centerLon], 8);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          maxZoom: 18,
+          attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+        mapInited = true;
+      } else {
+        map.setView([centerLat, centerLon], 8);
+      }
+      fetchFrames().then(function(f) {
+        frames = f;
+        if (!frames.length) {
+          if (locEl) locEl.textContent = locLabel + ' — no radar frames available.';
+          return;
+        }
+        var slider = document.getElementById('radar-time-slider');
+        if (slider) { slider.min = 0; slider.max = frames.length - 1; }
+        var pastEl = document.getElementById('radar-past-label');
+        var futEl = document.getElementById('radar-future-label');
+        if (pastEl) pastEl.textContent = '-' + ((frames.pastCount - 1) * 10) + ' min';
+        if (futEl) futEl.textContent = '+' + ((frames.length - frames.pastCount) * 10) + ' min';
+        // Start at "now" — the last past frame.
+        loadFrame(frames.pastCount - 1);
+      }).catch(function(err) {
+        if (locEl) locEl.textContent = locLabel + ' — failed to load radar: ' + err.message;
+      });
+    }
+
+    function startRadar() {
+      var slider = document.getElementById('radar-time-slider');
+      var playBtn = document.getElementById('radar-play-btn');
+      if (slider) {
+        slider.addEventListener('input', function() {
+          loadFrame(parseInt(slider.value, 10) || 0);
+        });
+      }
+      if (playBtn) {
+        playBtn.addEventListener('click', function() {
+          if (playTimer) {
+            clearInterval(playTimer); playTimer = null; playBtn.textContent = '▶ Play';
+          } else {
+            playBtn.textContent = '⏸ Pause';
+            playTimer = setInterval(function() { loadFrame(currentIdx + 1); }, 500);
+          }
+        });
+      }
+
+      // Listen for forecast-page location changes (shared with HRRR map and Sailing Area Current Map).
+      window.addEventListener('forecast-location-changed', function(e) {
+        if (e && e.detail && typeof e.detail.lat === 'number' && typeof e.detail.lon === 'number') {
+          initMap(e.detail.lat, e.detail.lon, e.detail.name || 'Selected location');
+        }
+      });
+
+      // Use already-set forecast location if available.
+      var preset = window.__forecastLocation;
+      if (preset && typeof preset.lat === 'number' && typeof preset.lon === 'number') {
+        initMap(preset.lat, preset.lon, preset.name || 'Selected location');
+        return;
+      }
+
+      // Otherwise wait briefly for an event, then fall back to geolocation → Miami.
+      var initialized = false;
+      function once(e) {
+        if (initialized) return;
+        if (e && e.detail && typeof e.detail.lat === 'number' && typeof e.detail.lon === 'number') {
+          initialized = true;
+          initMap(e.detail.lat, e.detail.lon, e.detail.name || 'Selected location');
+        }
+      }
+      window.addEventListener('forecast-location-changed', once);
+      setTimeout(function() {
+        if (initialized) return;
+        initialized = true;
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(
+            function(pos) { initMap(pos.coords.latitude, pos.coords.longitude, 'Your location'); },
+            function() { initMap(FALLBACK_LAT, FALLBACK_LON, 'Miami, FL (default)'); },
+            { timeout: 6000, maximumAge: 600000 }
+          );
+        } else {
+          initMap(FALLBACK_LAT, FALLBACK_LON, 'Miami, FL (default)');
+        }
+      }, 1500);
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', startRadar);
+    } else {
+      startRadar();
     }
   })();
   </script>`, req.session.user, lang));
