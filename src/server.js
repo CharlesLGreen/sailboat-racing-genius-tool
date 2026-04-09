@@ -6807,7 +6807,7 @@ app.get("/forecast", requireAuth, (req, res) => {
         return;
       }
       if (!mapInited) {
-        map = L.map('radar-map', { zoomControl: true, attributionControl: true, minZoom: 7, maxZoom: 10 }).setView([centerLat, centerLon], 7);
+        map = L.map('radar-map', { zoomControl: true, attributionControl: true, minZoom: 7, maxZoom: 10 }).setView([25.77, -80.19], 8);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
           minZoom: 7,
           maxZoom: 10,
