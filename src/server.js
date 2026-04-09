@@ -6807,7 +6807,7 @@ app.get("/forecast", requireAuth, (req, res) => {
         return;
       }
       if (!mapInited) {
-        map = L.map('radar-map', { zoomControl: true, attributionControl: true, minZoom: 7, maxZoom: 10 }).setView([centerLat, centerLon], 8);
+        map = L.map('radar-map', { zoomControl: true, attributionControl: true, minZoom: 7, maxZoom: 10 }).setView([centerLat, centerLon], 7);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
           minZoom: 7,
           maxZoom: 10,
@@ -6815,7 +6815,7 @@ app.get("/forecast", requireAuth, (req, res) => {
         }).addTo(map);
         mapInited = true;
       } else {
-        map.setView([centerLat, centerLon], 8);
+        map.setView([centerLat, centerLon], 7);
       }
       fetchFrames().then(function(f) {
         frames = f;
