@@ -1160,8 +1160,6 @@ function tPage(html, lang) {
 
 // Landing page at "/". Logged-in users go straight to the race feed.
 // Logged-out users see a chooser between Snipe Genius Tool (this app) and Crew College.
-// Mirrors My-Project's page.tsx design: full-screen background, centered floating logo,
-// two large card buttons. Falls back to hero.jpg when no video file is available.
 app.get("/", (req, res) => {
   if (req.session && req.session.user) return res.redirect("/feed");
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -1179,142 +1177,52 @@ app.get("/", (req, res) => {
   <title>Snipeovation — Snipe Sailing Tools</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { height: 100%; width: 100%; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #fff; background: #0a1628; overflow: hidden; }
-    .landing-root { position: relative; height: 100vh; width: 100vw; overflow: hidden; }
-    .landing-bg {
-      position: absolute; inset: 0; z-index: 0;
-      background: url('/hero.jpg') center 60% / cover no-repeat;
-      filter: saturate(1.15) brightness(0.95);
+    html, body { height: 100%; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #fff; background: #0a1628; }
+    .landing {
+      position: relative; min-height: 100vh; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; padding: 32px 20px; text-align: center;
+      background: linear-gradient(rgba(10,22,40,0.55), rgba(10,22,40,0.85)), url('/hero.jpg') center 60% / cover no-repeat;
     }
-    .landing-overlay { position: absolute; inset: 0; z-index: 1; background: linear-gradient(180deg, rgba(10,22,40,0.45) 0%, rgba(10,22,40,0.55) 50%, rgba(10,22,40,0.85) 100%); }
-    .landing-qr { position: absolute; top: 14px; left: 14px; z-index: 5; display: flex; flex-direction: column; align-items: center; gap: 4px; }
-    .landing-qr img { width: 56px; height: 56px; border-radius: 6px; background: white; padding: 3px; box-shadow: 0 2px 8px rgba(0,0,0,0.4); }
-    .landing-qr span { font-size: 0.55rem; color: #fff; font-weight: 700; line-height: 1.1; text-align: center; text-shadow: 0 1px 3px rgba(0,0,0,0.7); }
-    .landing-content {
-      position: absolute; inset: 0; z-index: 2;
+    .landing-logo { max-width: 320px; width: 80%; margin-bottom: 18px; border-radius: 10px; background: rgba(255,255,255,0.92); padding: 10px 14px; box-shadow: 0 8px 32px rgba(0,0,0,0.45); }
+    .landing-tagline { font-size: 1.05rem; color: #cfe1f5; max-width: 540px; margin: 0 auto 36px; line-height: 1.5; text-shadow: 0 2px 8px rgba(0,0,0,0.5); }
+    .landing-buttons { display: flex; gap: 24px; flex-wrap: wrap; justify-content: center; }
+    .landing-btn {
       display: flex; flex-direction: column; align-items: center; justify-content: center;
-      padding: 24px 20px; text-align: center;
+      width: 230px; min-height: 220px; padding: 24px 18px;
+      background: rgba(255,255,255,0.06); backdrop-filter: blur(10px);
+      border: 2px solid rgba(255,255,255,0.18); border-radius: 16px;
+      color: #fff; text-decoration: none; transition: all 0.18s ease;
+      box-shadow: 0 6px 24px rgba(0,0,0,0.35);
     }
-    .landing-logo-frame {
-      max-width: 72%; width: 100%; max-width: 560px;
-      margin-bottom: 56px;
-      background: #ffffff;
-      border-top: 3px solid #e8ecf2;
-      border-left: 3px solid #dde3ec;
-      border-right: 4px solid #9aa5b8;
-      border-bottom: 5px solid #6b7a92;
-      border-radius: 14px;
-      padding: 16px 18px;
-      box-shadow:
-        inset 0 1px 0 rgba(255,255,255,0.9),
-        0 12px 32px rgba(0,0,0,0.45),
-        0 2px 6px rgba(0,0,0,0.25);
-      animation: logoFloat 4s ease-in-out infinite, logoGlow 3s ease-in-out infinite alternate;
-    }
-    .landing-logo-frame img { width: 100%; height: auto; display: block; border-radius: 8px; }
-    @keyframes logoFloat {
-      0%, 100% { transform: translateY(0px); }
-      50% { transform: translateY(-6px); }
-    }
-    @keyframes logoGlow {
-      0% { filter: drop-shadow(0 6px 18px rgba(37,99,235,0.18)) drop-shadow(0 2px 6px rgba(0,0,0,0.12)); }
-      100% { filter: drop-shadow(0 12px 30px rgba(37,99,235,0.40)) drop-shadow(0 4px 14px rgba(245,158,11,0.20)) drop-shadow(0 0 36px rgba(37,99,235,0.18)); }
-    }
-    .landing-buttons { display: flex; gap: 24px; align-items: stretch; justify-content: center; flex-wrap: wrap; }
-    .card-btn {
-      display: flex; flex-direction: column;
-      width: 11rem; min-width: 11rem;
-      background: linear-gradient(180deg, #ffffff 0%, #f1f5fb 100%);
-      border-top: 1px solid #e2e8f0;
-      border-left: 1px solid #e2e8f0;
-      border-right: 2px solid #94a3b8;
-      border-bottom: 4px solid #64748b;
-      border-radius: 12px;
-      overflow: hidden;
-      cursor: pointer;
-      text-decoration: none;
-      color: #0b3d6e;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
-      transition: all 0.15s ease;
-    }
-    .card-btn:hover {
-      background: linear-gradient(180deg, #f8fafc 0%, #e6eef8 100%);
-      box-shadow: 0 14px 32px rgba(0,0,0,0.45);
-      transform: translateY(-2px);
-    }
-    .card-btn:active {
-      border-top: 2px solid #94a3b8;
-      border-left: 2px solid #94a3b8;
-      border-right: 1px solid #e2e8f0;
-      border-bottom: 2px solid #e2e8f0;
-      transform: translateY(2px);
-    }
-    .card-icon-frame {
-      height: 6.3rem; margin: 0.4rem; border-radius: 6px;
-      display: flex; align-items: center; justify-content: center;
-      background: linear-gradient(135deg, #0b3d6e 0%, #1565c0 100%);
-      box-shadow: inset 0 0 12px rgba(0,0,0,0.25);
-      overflow: hidden;
-    }
-    .card-icon-frame .emoji { font-size: 4rem; line-height: 1; filter: drop-shadow(0 3px 6px rgba(0,0,0,0.4)); }
-    .card-title {
-      flex: 1; display: flex; align-items: center; justify-content: center;
-      padding: 12px 10px; text-align: center;
-    }
-    .card-title h2 {
-      font-size: 0.95rem; font-weight: 800; color: #0b3d6e;
-      margin: 0; line-height: 1.25; letter-spacing: 0.2px;
-    }
-    .landing-foot {
-      position: absolute; bottom: 14px; left: 0; right: 0; z-index: 3;
-      display: flex; gap: 14px; flex-wrap: wrap; justify-content: center;
-      font-size: 0.78rem; color: rgba(255,255,255,0.7);
-      padding: 0 16px; pointer-events: none;
-    }
-    .landing-foot a { color: rgba(144,202,249,0.95); text-decoration: none; pointer-events: auto; }
-    .landing-foot a:hover { text-decoration: underline; color: #fff; }
-    @media (max-width: 640px) {
-      .landing-logo-frame { margin-bottom: 36px; padding: 12px 14px; }
-      .landing-buttons { gap: 14px; }
-      .card-btn { width: 9.2rem; min-width: 9.2rem; }
-      .card-icon-frame { height: 5.4rem; }
-      .card-icon-frame .emoji { font-size: 3.2rem; }
-      .card-title h2 { font-size: 0.85rem; }
-      .landing-qr img { width: 44px; height: 44px; }
-      .landing-qr span { font-size: 0.5rem; }
-    }
-    @media (max-height: 640px) {
-      .landing-logo-frame { margin-bottom: 24px; }
+    .landing-btn:hover { transform: translateY(-4px); border-color: #90caf9; background: rgba(144,202,249,0.12); box-shadow: 0 12px 32px rgba(0,0,0,0.45); }
+    .landing-btn .icon { font-size: 3rem; margin-bottom: 14px; }
+    .landing-btn .title { font-size: 1.15rem; font-weight: 800; margin-bottom: 8px; letter-spacing: 0.3px; }
+    .landing-btn .sub { font-size: 0.82rem; color: #b3c5d9; line-height: 1.4; }
+    .landing-foot { margin-top: 40px; display: flex; gap: 18px; flex-wrap: wrap; justify-content: center; font-size: 0.85rem; color: #90a4ae; }
+    .landing-foot a { color: #90caf9; text-decoration: none; }
+    .landing-foot a:hover { text-decoration: underline; }
+    @media (max-width: 480px) {
+      .landing-btn { width: 88%; max-width: 320px; min-height: 180px; }
+      .landing-tagline { font-size: 0.95rem; }
     }
   </style>
 </head>
 <body>
-  <div class="landing-root">
-    <div class="landing-bg"></div>
-    <div class="landing-overlay"></div>
-
-    <div class="landing-qr">
-      <img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=https://snipeovation.com" alt="QR Code — Scan to install Snipeovation on your phone">
-      <span>Scan to Install<br>Snipeovation</span>
+  <div class="landing">
+    <img class="landing-logo" src="/logo.jpg" alt="Snipeovation">
+    <p class="landing-tagline">Serious sailing, serious fun — racing logs, AI coaching, tuning, forecasts, and crew training for the Snipe class.</p>
+    <div class="landing-buttons">
+      <a class="landing-btn" href="/feed">
+        <span class="icon">⛵</span>
+        <span class="title">Snipe Genius Tool</span>
+        <span class="sub">Race log, tuning, forecasts &amp; AI coaching</span>
+      </a>
+      <a class="landing-btn" href="https://my-project-tan-seven-56.vercel.app" target="_blank" rel="noopener noreferrer">
+        <span class="icon">🎓</span>
+        <span class="title">Crew College</span>
+        <span class="sub">Online crew training &amp; diplomas</span>
+      </a>
     </div>
-
-    <div class="landing-content">
-      <div class="landing-logo-frame">
-        <img src="/logo.jpg" alt="Snipeovation">
-      </div>
-
-      <div class="landing-buttons">
-        <a class="card-btn" href="/feed">
-          <div class="card-icon-frame"><span class="emoji">⛵</span></div>
-          <div class="card-title"><h2>Snipe Sailboat<br>Racing Genius Tool</h2></div>
-        </a>
-        <a class="card-btn" href="https://my-project-tan-seven-56.vercel.app" target="_blank" rel="noopener noreferrer">
-          <div class="card-icon-frame"><span class="emoji">🎓</span></div>
-          <div class="card-title"><h2>Snipe<br>Crew College<sup style="font-size:0.5rem;">©</sup></h2></div>
-        </a>
-      </div>
-    </div>
-
     <div class="landing-foot">
       <a href="/feed">Public race feed</a>
       <a href="/login">Log in</a>
