@@ -15,5 +15,3 @@
 
 ## How The Sites Work
 - snipeovation.com → Ve
-</content>
-</invoke>
