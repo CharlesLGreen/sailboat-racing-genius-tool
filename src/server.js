@@ -1600,48 +1600,78 @@ app.get("/forgot-password", (req, res) => {
   </div>`, null, lang));
 });
 
-app.post("/forgot-password", (req, res) => {
+app.post("/forgot-password", async (req, res) => {
   const email = (req.body.email || '').trim().toLowerCase();
   const lang = getLang(req);
   const user = db.prepare("SELECT id, email, display_name FROM users WHERE email = ?").get(email);
 
-  if (!user) {
-    return res.send(renderPage(`<div class="container">
-      <h2>${t('resetLink', lang)}</h2>
-      <div class="form-card" style="text-align:center;padding:32px;">
-        <div style="font-size:2.5rem;margin-bottom:12px;">📧</div>
-        <p style="color:#555;">${t('resetLinkSent', lang)}</p>
-        <div class="form-footer"><a href="/login">${t('backToLogin', lang)}</a></div>
-      </div>
-    </div>`, null, lang));
-  }
+  // Generic confirmation page — shown whether or not the email matches a user,
+  // so we don't leak which email addresses are registered.
+  const successPage = renderPage(`<div class="container">
+    <h2>${t('resetLink', lang)}</h2>
+    <div class="form-card" style="text-align:center;padding:32px;">
+      <div style="font-size:2.5rem;margin-bottom:12px;">📧</div>
+      <p style="color:#2e7d32;font-weight:600;font-size:1.05rem;">${t('resetLinkSent', lang)}</p>
+      <p style="color:#555;font-size:0.9rem;margin-top:10px;">If an account exists for <strong>${escapeHtml(email)}</strong>, a reset link has been sent. The link will expire in 1 hour. Check your spam folder if you don't see it within a few minutes.</p>
+      <div class="form-footer" style="margin-top:18px;"><a href="/login">${t('backToLogin', lang)}</a></div>
+    </div>
+  </div>`, null, lang);
 
-  // Generate token
+  if (!user) return res.send(successPage);
+
+  // Generate token, store it, build reset URL
   const token = crypto.randomBytes(32).toString('hex');
   const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 hour
-
-  // Invalidate any previous tokens for this user
   db.prepare("UPDATE password_resets SET used = 1 WHERE user_id = ? AND used = 0").run(user.id);
-
-  // Store new token
   db.prepare("INSERT INTO password_resets (user_id, token, expires_at) VALUES (?, ?, ?)").run(user.id, token, expiresAt);
+  const host = req.headers.host || 'snipeovation.com';
+  const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'https');
+  const resetUrl = proto + '://' + host + '/reset-password?token=' + token;
 
-  const resetUrl = (req.headers.host ? (req.protocol + '://' + req.headers.host) : '') + '/reset-password?token=' + token;
+  // Send the email via Resend. On failure we still show the success page so we
+  // don't leak whether the email exists, but we log the error server-side.
+  if (!process.env.RESEND_API_KEY) {
+    console.error('[forgot-password] RESEND_API_KEY not set; cannot send reset email to', email);
+    return res.send(successPage);
+  }
+  try {
+    const greeting = user.display_name ? ('Hi ' + user.display_name + ',') : 'Hi,';
+    const html = `<div style="font-family:Segoe UI,Arial,sans-serif;max-width:520px;margin:0 auto;padding:24px;color:#1a2a3a;">
+      <h2 style="color:#0b3d6e;margin:0 0 16px;">Snipeovation password reset</h2>
+      <p>${greeting}</p>
+      <p>You (or someone using your email) requested a password reset for your Snipeovation account.</p>
+      <p style="margin:20px 0;">
+        <a href="${resetUrl}" style="display:inline-block;background:#0b3d6e;color:#fff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:700;">Reset your password</a>
+      </p>
+      <p style="font-size:0.85rem;color:#555;">Or paste this URL into your browser:<br><a href="${resetUrl}" style="color:#1565c0;word-break:break-all;">${resetUrl}</a></p>
+      <p style="font-size:0.85rem;color:#555;">This link will expire in 1 hour. If you didn't request this, you can safely ignore this email — your password will not be changed.</p>
+      <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0;">
+      <p style="font-size:0.78rem;color:#888;">Snipeovation — Snipe Sailboat Racing Genius Tool</p>
+    </div>`;
+    const text = greeting + '\n\nYou requested a password reset for your Snipeovation account.\n\nReset link: ' + resetUrl + '\n\nThis link will expire in 1 hour. If you didn\'t request this, you can safely ignore this email — your password will not be changed.\n\nSnipeovation';
 
-  res.send(renderPage(`<div class="container">
-    <h2>${t('resetPassword', lang)}</h2>
-    <div class="form-card" style="padding:28px;">
-      <div style="text-align:center;margin-bottom:16px;">
-        <div style="font-size:2.5rem;margin-bottom:8px;">🔑</div>
-        <p style="color:#2e7d32;font-weight:600;">${t('resetLinkSent', lang)}</p>
-      </div>
-      <div style="background:#f0f7ff;border:2px solid #c5ddf5;border-radius:8px;padding:14px;margin-bottom:16px;word-break:break-all;">
-        <a href="${escapeHtml(resetUrl)}" style="color:#0b3d6e;font-weight:600;font-size:0.95rem;">${escapeHtml(resetUrl)}</a>
-      </div>
-      <a href="${escapeHtml(resetUrl)}" class="btn btn-primary" style="display:block;text-align:center;width:100%;">${t('resetPassword', lang)}</a>
-      <div class="form-footer" style="margin-top:16px;"><a href="/login">${t('backToLogin', lang)}</a></div>
-    </div>
-  </div>`, null));
+    const resp = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + process.env.RESEND_API_KEY,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        from: 'Snipeovation <onboarding@resend.dev>',
+        to: [user.email],
+        subject: 'Reset your Snipeovation password',
+        html: html,
+        text: text
+      })
+    });
+    if (!resp.ok) {
+      const errBody = await resp.text();
+      console.error('[forgot-password] Resend error', resp.status, errBody);
+    }
+  } catch (err) {
+    console.error('[forgot-password] Failed to send email:', err && err.message);
+  }
+  res.send(successPage);
 });
 
 app.get("/reset-password", (req, res) => {
@@ -10101,7 +10131,10 @@ function loginPage(error) {
         </div>
         <div class="form-group">
           <label id="lbl-password">Password</label>
-          <input type="password" name="password" required>
+          <span style="position:relative;display:block;">
+            <input type="password" name="password" required style="padding-right:42px;">
+            <button type="button" tabindex="-1" aria-label="Show password" onclick="var i=this.previousElementSibling;i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'👁':'🙈';" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;font-size:1.2rem;cursor:pointer;padding:4px 8px;">👁</button>
+          </span>
         </div>
         <button type="submit" id="btn-login" class="btn btn-primary" style="width:100%;">Login</button>
         <div style="text-align:right;margin-top:8px;"><a href="/forgot-password" id="lnk-forgot" style="color:#1565c0;font-size:0.88rem;">Forgot password?</a></div>
@@ -10175,11 +10208,17 @@ function registerPage(error) {
         </div>
         <div class="form-group">
           <label id="lbl-reg-pw">Password *</label>
-          <input type="password" name="password" required minlength="6" id="reg-pw-input" placeholder="At least 6 characters">
+          <span style="position:relative;display:block;">
+            <input type="password" name="password" required minlength="6" id="reg-pw-input" placeholder="At least 6 characters" style="padding-right:42px;">
+            <button type="button" tabindex="-1" aria-label="Show password" onclick="var i=this.previousElementSibling;i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'👁':'🙈';" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;font-size:1.2rem;cursor:pointer;padding:4px 8px;">👁</button>
+          </span>
         </div>
         <div class="form-group">
           <label id="lbl-reg-cpw">Confirm Password *</label>
-          <input type="password" name="confirm_password" required minlength="6">
+          <span style="position:relative;display:block;">
+            <input type="password" name="confirm_password" required minlength="6" style="padding-right:42px;">
+            <button type="button" tabindex="-1" aria-label="Show password" onclick="var i=this.previousElementSibling;i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'👁':'🙈';" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;font-size:1.2rem;cursor:pointer;padding:4px 8px;">👁</button>
+          </span>
         </div>
         <button type="submit" id="btn-reg-submit" class="btn btn-primary" style="width:100%;">Create Account</button>
       </form>
