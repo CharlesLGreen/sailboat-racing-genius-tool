@@ -1308,7 +1308,7 @@ app.get("/", (req, res) => {
       </div>
 
       <div class="landing-buttons">
-        <a class="card-btn" href="/feed">
+        <a class="card-btn" href="/feed" target="_blank" rel="noopener noreferrer">
           <div class="card-icon-frame"><span class="emoji">⛵</span></div>
           <div class="card-title"><h2>Snipe Sailboat<br>Racing Genius Tool</h2></div>
         </a>
