@@ -8665,7 +8665,7 @@ function renderPage(content, user, lang, showHero) {
   <div class="sticky-nav">
     ${user ? `
       <a href="/">🏠 ${L('home')}</a>
-      <a href="https://www.snipeovation.com" style="font-size:0.75rem;color:#a3d4ff;">⛵ Snipeovation.com</a>
+      <a href="https://snipeovation.com" target="_blank" rel="noopener" style="font-size:0.75rem;color:#a3d4ff;">⛵ Snipeovation.com</a>
       <a href="/">${L('raceFeed')}</a>
       <a href="/dashboard">${L('myLogs')}</a>
       <a href="/quick-log" class="btn-quick-entry">&#9889; Quick</a>
@@ -8685,7 +8685,7 @@ function renderPage(content, user, lang, showHero) {
       <a href="/logout">${L('logout')}</a>
     ` : `
       <a href="/">🏠 ${L('home')}</a>
-      <a href="https://www.snipeovation.com" style="font-size:0.75rem;color:#a3d4ff;">⛵ Snipeovation.com</a>
+      <a href="https://snipeovation.com" target="_blank" rel="noopener" style="font-size:0.75rem;color:#a3d4ff;">⛵ Snipeovation.com</a>
       <a href="/login">${L('login')}</a>
       <a href="/register" class="btn-accent">${L('signUp')}</a>
       <a href="/tuning-guides">${L('tuningGuides')}</a>
