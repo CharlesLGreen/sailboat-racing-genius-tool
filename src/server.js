@@ -9750,7 +9750,7 @@ function logFormPage(data, error, userWireDefault, lang, dataSharing, lastBoatNu
           </div>
           <div class="form-group">
             <label>${L('perfRating')}</label>
-            <select name="performance_rating" style="padding:10px;border:1p<input type="text" id="task-input" placeholder="Enter task description" style="flex:1;min-width:200px;padding:10px;border:1px s
+            <select name="performance_rating" style="padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">
               <option value="">-- ${lang === 'es' ? 'Seleccionar' : lang === 'it' ? 'Seleziona' : lang === 'pt' ? 'Selecionar' : 'Select'} --</option>
               ${[1,2,3,4,5,6,7,8,9,10].map(n => `<option value="${n}" ${d.performance_rating == n ? "selected" : ""}>${n}${n === 1 ? (lang === 'es' ? " (peor)" : lang === 'it' ? " (peggiore)" : lang === 'pt' ? " (pior)" : " (worst)") : n === 10 ? (lang === 'es' ? " (mejor)" : lang === 'it' ? " (migliore)" : lang === 'pt' ? " (melhor)" : " (best)") : ""}</option>`).join("")}
             </select>
@@ -9772,7 +9772,7 @@ function logFormPage(data, error, userWireDefault, lang, dataSharing, lastBoatNu
           </div>
           <div class="form-group">
             <label>${L('seaState')}</label>
-            <select name="sea_state" style="padding:10px;border:1p<input type="text" id="task-input" placeholder="Enter task description" style="flex:1;min-width:200px;padding:10px;border:1px s
+            <select name="sea_state" style="padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">
               <option value="">-- ${lang === 'es' ? 'Seleccionar' : lang === 'it' ? 'Seleziona' : lang === 'pt' ? 'Selecionar' : 'Select'} --</option>
               <option value="Flat" ${d.sea_state === 'Flat' ? 'selected' : ''}>${L('flat')}</option>
               <option value="Choppy" ${d.sea_state === 'Choppy' ? 'selected' : ''}>${L('choppy')}</option>
@@ -9781,7 +9781,7 @@ function logFormPage(data, error, userWireDefault, lang, dataSharing, lastBoatNu
           </div>
           <div class="form-group">
             <label>🌊 ${lang === 'es' ? 'Tipo de Agua' : lang === 'it' ? 'Tipo di Acqua' : lang === 'pt' ? 'Tipo de Água' : 'Water Type'}</label>
-            <select name="water_type" style="padding:10px;border:1p<input type="text" id="task-input" placeholder="Enter task description" style="flex:1;min-width:200px;padding:10px;border:1px s
+            <select name="water_type" style="padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">
               <option value="">-- ${lang === 'es' ? 'Seleccionar' : lang === 'it' ? 'Seleziona' : lang === 'pt' ? 'Selecionar' : 'Select'} --</option>
               <option value="Saltwater" ${d.water_type === 'Saltwater' ? 'selected' : ''}>${lang === 'es' ? '🌊 Agua Salada' : lang === 'it' ? '🌊 Acqua Salata' : lang === 'pt' ? '🌊 Água Salgada' : '🌊 Saltwater'}</option>
               <option value="Freshwater" ${d.water_type === 'Freshwater' ? 'selected' : ''}>${lang === 'es' ? '💧 Agua Dulce' : lang === 'it' ? '💧 Acqua Dolce' : lang === 'pt' ? '💧 Água Doce' : '💧 Freshwater'}</option>
@@ -9800,23 +9800,30 @@ function logFormPage(data, error, userWireDefault, lang, dataSharing, lastBoatNu
 
           <div class="form-group">
             <label>${lang === 'es' ? 'Velería del Mayor' : lang === 'it' ? 'Veleria della Randa' : lang === 'pt' ? 'Fabricante da Vela Grande' : 'Mainsail Maker'}</label>
-            <select name="main_maker" id="main_maker" style="padding:10px;border:1p<input type="text" id="task-input" placeholder="Enter task description" style="flex:1;min-width:200px;padding:10px;border:1px s
+            <select name="main_maker" id="main_maker" style="padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">
               <option value="">-- ${lang === 'es' ? 'Seleccionar' : lang === 'it' ? 'Selezionare' : lang === 'pt' ? 'Selecionar' : 'Select'} --</option>
               <option value="Quantum" ${d.main_maker === 'Quantum' ? 'selected' : ''}>Quantum</option>
               <option value="North" ${d.main_maker === 'North' ? 'selected' : ''}>North</option>
               <option value="Olimpic" ${d.main_maker === 'Olimpic' ? 'selected' : ''}>Olimpic</option>
+              <option value="PL Sails" ${d.main_maker === 'PL Sails' ? 'selected' : ''}>PL Sails (Pires de Lima, Portugal)</option>
+              <option value="VB Voiles" ${d.main_maker === 'VB Voiles' ? 'selected' : ''}>VB Voiles (France)</option>
+              <option value="WB Sails" ${d.main_maker === 'WB Sails' ? 'selected' : ''}>WB Sails (Finland)</option>
+              <option value="Ullman Sails" ${d.main_maker === 'Ullman Sails' ? 'selected' : ''}>Ullman Sails</option>
+              <option value="Custom" ${d.main_maker === 'Custom' ? 'selected' : ''}>Other / Custom…</option>
             </select>
+            <input id="main_maker_custom" type="text" placeholder="Sailmaker name (custom)" value="${d.main_maker === 'Custom' ? '' : ''}" style="display:${d.main_maker === 'Custom' ? '' : 'none'};margin-top:6px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">
           </div>
           <div class="form-group">
             <label>${lang === 'es' ? 'Modelo del Mayor' : lang === 'it' ? 'Modello della Randa' : lang === 'pt' ? 'Modelo da Vela Grande' : 'Mainsail Model'}</label>
-            <select name="mainsail_used" id="mainsail_model" style="padding:10px;border:1p<input type="text" id="task-input" placeholder="Enter task description" style="flex:1;min-width:200px;padding:10px;border:1px s
+            <select name="mainsail_used" id="mainsail_model" style="padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">
               <option value="${escapeHtml(d.mainsail_used)}" selected>${escapeHtml(d.mainsail_used) || '-- ' + (lang === 'es' ? 'Seleccionar fabricante primero' : lang === 'it' ? 'Selezionare prima il produttore' : lang === 'pt' ? 'Selecione o fabricante primeiro' : 'Select maker first') + ' --'}</option>
             </select>
+            <input id="mainsail_model_custom" type="text" placeholder="Mainsail model (custom)" style="display:none;margin-top:6px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">
           </div>
 
           <div class="form-group">
             <label>${lang === 'es' ? 'Estado del Mayor' : lang === 'it' ? 'Condizione della Randa' : lang === 'pt' ? 'Condição da Vela Grande' : 'Mainsail Condition'}</label>
-            <select name="main_condition" style="padding:10px;border:1p<input type="text" id="task-input" placeholder="Enter task description" style="flex:1;min-width:200px;padding:10px;border:1px s
+            <select name="main_condition" style="padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">
               <option value="">-- ${lang === 'es' ? 'Seleccionar' : lang === 'it' ? 'Selezionare' : lang === 'pt' ? 'Selecionar' : 'Select'} --</option>
               <option value="New" ${d.main_condition === 'New' ? 'selected' : ''}>${lang === 'es' ? 'Nueva' : lang === 'it' ? 'Nuova' : lang === 'pt' ? 'Nova' : 'New'}</option>
               <option value="Mid-life" ${d.main_condition === 'Mid-life' ? 'selected' : ''}>${lang === 'es' ? 'Vida media' : lang === 'it' ? 'Mezza vita' : lang === 'pt' ? 'Meia vida' : 'Mid-life'}</option>
@@ -9826,23 +9833,30 @@ function logFormPage(data, error, userWireDefault, lang, dataSharing, lastBoatNu
 
           <div class="form-group">
             <label>${lang === 'es' ? 'Velería del Foque' : lang === 'it' ? 'Veleria del Fiocco' : lang === 'pt' ? 'Fabricante da Vela de Proa' : 'Jib Maker'}</label>
-            <select name="jib_maker" id="jib_maker" style="padding:10px;border:1p<input type="text" id="task-input" placeholder="Enter task description" style="flex:1;min-width:200px;padding:10px;border:1px s
+            <select name="jib_maker" id="jib_maker" style="padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">
               <option value="">-- ${lang === 'es' ? 'Seleccionar' : lang === 'it' ? 'Selezionare' : lang === 'pt' ? 'Selecionar' : 'Select'} --</option>
               <option value="Quantum" ${d.jib_maker === 'Quantum' ? 'selected' : ''}>Quantum</option>
               <option value="North" ${d.jib_maker === 'North' ? 'selected' : ''}>North</option>
               <option value="Olimpic" ${d.jib_maker === 'Olimpic' ? 'selected' : ''}>Olimpic</option>
+              <option value="PL Sails" ${d.jib_maker === 'PL Sails' ? 'selected' : ''}>PL Sails (Pires de Lima, Portugal)</option>
+              <option value="VB Voiles" ${d.jib_maker === 'VB Voiles' ? 'selected' : ''}>VB Voiles (France)</option>
+              <option value="WB Sails" ${d.jib_maker === 'WB Sails' ? 'selected' : ''}>WB Sails (Finland)</option>
+              <option value="Ullman Sails" ${d.jib_maker === 'Ullman Sails' ? 'selected' : ''}>Ullman Sails</option>
+              <option value="Custom" ${d.jib_maker === 'Custom' ? 'selected' : ''}>Other / Custom…</option>
             </select>
+            <input id="jib_maker_custom" type="text" placeholder="Jib sailmaker name (custom)" style="display:${d.jib_maker === 'Custom' ? '' : 'none'};margin-top:6px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">
           </div>
           <div class="form-group">
             <label>${lang === 'es' ? 'Modelo del Foque' : lang === 'it' ? 'Modello del Fiocco' : lang === 'pt' ? 'Modelo da Vela de Proa' : 'Jib Model'}</label>
-            <select name="jib_used" id="jib_model" style="padding:10px;border:1p<input type="text" id="task-input" placeholder="Enter task description" style="flex:1;min-width:200px;padding:10px;border:1px s
+            <select name="jib_used" id="jib_model" style="padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">
               <option value="${escapeHtml(d.jib_used)}" selected>${escapeHtml(d.jib_used) || '-- ' + (lang === 'es' ? 'Seleccionar fabricante primero' : lang === 'it' ? 'Selezionare prima il produttore' : lang === 'pt' ? 'Selecione o fabricante primeiro' : 'Select maker first') + ' --'}</option>
             </select>
+            <input id="jib_model_custom" type="text" placeholder="Jib model (custom)" style="display:none;margin-top:6px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">
           </div>
 
           <div class="form-group">
             <label>${lang === 'es' ? 'Estado del Foque' : lang === 'it' ? 'Condizione del Fiocco' : lang === 'pt' ? 'Condição da Vela de Proa' : 'Jib Condition'}</label>
-            <select name="jib_condition" style="padding:10px;border:1p<input type="text" id="task-input" placeholder="Enter task description" style="flex:1;min-width:200px;padding:10px;border:1px s
+            <select name="jib_condition" style="padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">
               <option value="">-- ${lang === 'es' ? 'Seleccionar' : lang === 'it' ? 'Selezionare' : lang === 'pt' ? 'Selecionar' : 'Select'} --</option>
               <option value="New" ${d.jib_condition === 'New' ? 'selected' : ''}>${lang === 'es' ? 'Nueva' : lang === 'it' ? 'Nuova' : lang === 'pt' ? 'Nova' : 'New'}</option>
               <option value="Mid-life" ${d.jib_condition === 'Mid-life' ? 'selected' : ''}>${lang === 'es' ? 'Vida media' : lang === 'it' ? 'Mezza vita' : lang === 'pt' ? 'Meia vida' : 'Mid-life'}</option>
@@ -9852,7 +9866,7 @@ function logFormPage(data, error, userWireDefault, lang, dataSharing, lastBoatNu
 
           <div class="form-group">
             <label>${lang === 'es' ? 'Velería del Spinnaker' : lang === 'it' ? 'Veleria dello Spinnaker' : lang === 'pt' ? 'Fabricante do Spinnaker' : 'Spinnaker Maker'}</label>
-            <select id="spinnaker_maker" style="padding:10px;border:1p<input type="text" id="task-input" placeholder="Enter task description" style="flex:1;min-width:200px;padding:10px;border:1px s
+            <select id="spinnaker_maker" style="padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">
               <option value="">-- ${lang === 'es' ? 'Seleccionar' : lang === 'it' ? 'Selezionare' : lang === 'pt' ? 'Selecionar' : 'Select'} --</option>
               <option value="Quantum">Quantum</option>
               <option value="North">North</option>
@@ -9861,7 +9875,7 @@ function logFormPage(data, error, userWireDefault, lang, dataSharing, lastBoatNu
           </div>
           <div class="form-group" id="spinnaker-model-group" style="display:none;">
             <label>${lang === 'es' ? 'Modelo del Spinnaker' : lang === 'it' ? 'Modello dello Spinnaker' : lang === 'pt' ? 'Modelo do Spinnaker' : 'Spinnaker Model'}</label>
-            <select id="spinnaker_model" style="padding:10px;border:1p<input type="text" id="task-input" placeholder="Enter task description" style="flex:1;min-width:200px;padding:10px;border:1px s
+            <select id="spinnaker_model" style="padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">
               <option value="">-- ${lang === 'es' ? 'Seleccionar' : lang === 'it' ? 'Selezionare' : lang === 'pt' ? 'Selecionar' : 'Select'} --</option>
               <option value="Red Spinnaker">Red Spinnaker</option>
               <option value="The Whomper">The Whomper</option>
@@ -9871,14 +9885,24 @@ function logFormPage(data, error, userWireDefault, lang, dataSharing, lastBoatNu
           <script>
           (function() {
             var mainModels = {
-              Quantum: ['C-5', 'X-2', 'XFB'],
-              North: ['SW-4', 'PR-3', 'CB-2'],
-              Olimpic: ['CRC', 'XPM', 'CM1', 'CM5', 'GTM', 'GTM-F']
+              'Quantum': ['C-5', 'X-2', 'XFB'],
+              'North': ['SW-4', 'PR-3', 'CB-2'],
+              'Olimpic': ['CRC', 'XPM', 'CM1', 'CM5', 'GTM', 'GTM-F'],
+              'PL Sails': ['PL Radial', 'PL Cross-cut', 'PL Light Air Special'],
+              'VB Voiles': ['VB Radial', 'VB Heavy Air', 'VB Light Air'],
+              'WB Sails': ['WB Standard Main'],
+              'Ullman Sails': ['Ullman Standard Main'],
+              'Custom': []
             };
             var jibModels = {
-              Quantum: ['RSJ-14', 'RSJ-8'],
-              North: ['R3-LM', 'Cross-Cut Jib'],
-              Olimpic: ['XPJ', 'AR2-F', 'GTJ']
+              'Quantum': ['RSJ-14', 'RSJ-8'],
+              'North': ['R3-LM', 'Cross-Cut Jib'],
+              'Olimpic': ['XPJ', 'AR2-F', 'GTJ'],
+              'PL Sails': ['PL Radial Jib', 'PL Cross-cut Jib'],
+              'VB Voiles': ['VB Radial Jib', 'VB All-Purpose Jib'],
+              'WB Sails': ['WB Standard Jib'],
+              'Ullman Sails': ['Ullman Standard Jib'],
+              'Custom': []
             };
             var selectMakerFirstTxt = '${t("selectMakerFirst", lang)}';
             var selectModelTxt = '${t("selectModel", lang)}';
@@ -9905,19 +9929,36 @@ function logFormPage(data, error, userWireDefault, lang, dataSharing, lastBoatNu
                 modelSel.appendChild(o);
               });
             }
+            function toggleCustom(makerSel, makerCustom, modelCustom) {
+              var isCustom = makerSel.value === 'Custom';
+              if (makerCustom) makerCustom.style.display = isCustom ? '' : 'none';
+              if (modelCustom) modelCustom.style.display = isCustom ? '' : 'none';
+            }
             var mainMaker = document.getElementById('main_maker');
             var mainModel = document.getElementById('mainsail_model');
             var jibMaker = document.getElementById('jib_maker');
             var jibModel = document.getElementById('jib_model');
+            var mainMakerCustom = document.getElementById('main_maker_custom');
+            var mainModelCustom = document.getElementById('mainsail_model_custom');
+            var jibMakerCustom = document.getElementById('jib_maker_custom');
+            var jibModelCustom = document.getElementById('jib_model_custom');
             var curMain = '${escapeHtml(d.mainsail_used)}';
             var curJib = '${escapeHtml(d.jib_used)}';
             if (mainMaker && mainModel) {
               if (mainMaker.value) populateModels(mainMaker, mainModel, mainModels, curMain);
-              mainMaker.addEventListener('change', function() { populateModels(mainMaker, mainModel, mainModels, ''); });
+              toggleCustom(mainMaker, mainMakerCustom, mainModelCustom);
+              mainMaker.addEventListener('change', function() {
+                populateModels(mainMaker, mainModel, mainModels, '');
+                toggleCustom(mainMaker, mainMakerCustom, mainModelCustom);
+              });
             }
             if (jibMaker && jibModel) {
               if (jibMaker.value) populateModels(jibMaker, jibModel, jibModels, curJib);
-              jibMaker.addEventListener('change', function() { populateModels(jibMaker, jibModel, jibModels, ''); });
+              toggleCustom(jibMaker, jibMakerCustom, jibModelCustom);
+              jibMaker.addEventListener('change', function() {
+                populateModels(jibMaker, jibModel, jibModels, '');
+                toggleCustom(jibMaker, jibMakerCustom, jibModelCustom);
+              });
             }
 
             // Spinnaker Easter egg
@@ -9978,7 +10019,7 @@ function logFormPage(data, error, userWireDefault, lang, dataSharing, lastBoatNu
           </div>
           <div class="form-group">
             <label>${L('wireSize')}</label>
-            <select name="wire_size" id="wire-size-select" style="padding:10px;border:1p<input type="text" id="task-input" placeholder="Enter task description" style="flex:1;min-width:200px;padding:10px;border:1px s
+            <select name="wire_size" id="wire-size-select" style="padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">
               <option value="">-- ${lang === 'es' ? 'Seleccionar' : lang === 'it' ? 'Seleziona' : lang === 'pt' ? 'Selecionar' : 'Select'} --</option>
               <option value="2.5mm compressed" ${(d.wire_size || userWireDefault) === '2.5mm compressed' ? 'selected' : ''}>2.5mm ${lang === 'es' ? 'Comprimido' : lang === 'it' ? 'Compresso' : lang === 'pt' ? 'Comprimido' : 'Compressed Strand'}</option>
               <option value="3mm standard" ${(d.wire_size || userWireDefault) === '3mm standard' ? 'selected' : ''}>3mm Standard</option>
@@ -10040,7 +10081,7 @@ function logFormPage(data, error, userWireDefault, lang, dataSharing, lastBoatNu
           </div>
           <div class="form-group">
             <label>${L('staMasterWiggle')}</label>
-            <select name="mast_wiggle" style="padding:10px;border:1p<input type="text" id="task-input" placeholder="Enter task description" style="flex:1;min-width:200px;padding:10px;border:1px s
+            <select name="mast_wiggle" style="padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.95rem;width:100%;">
               <option value="">-- ${L('select')} --</option>
               <option value="None" ${d.mast_wiggle === 'None' ? 'selected' : ''}>${L('none')}</option>
               <option value="A little" ${d.mast_wiggle === 'A little' ? 'selected' : ''}>${L('aLittle')}</option>
